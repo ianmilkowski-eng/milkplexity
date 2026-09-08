@@ -219,7 +219,7 @@ Apply in this order; each line clears the finding in brackets.
 /* contrast [9]: raise the dim tokens to 4.5:1 on both surfaces */
 :root{--ink-dim:#8B9298}                                   /* dark: 5.65:1 on #16181A (was 3.59:1) */
 @media (prefers-color-scheme: light){:root{--ink-dim:#6B675F}}  /* light: 5.25:1 on #F8F7F4 (was 2.78:1) */
-@media (prefers-color-scheme: light){.cta{color:#fff}}          /* #0B0D0E on the light accent is only 3.97:1; white is 4.6:1 */
+@media (prefers-color-scheme: light){.cta{color:#fff}}          /* #0B0D0E on the light accent is only 3.97:1; white is 4.91:1 */
 .meta{font-size:13px}
 
 /* overflow [6] */
