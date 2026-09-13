@@ -178,6 +178,12 @@ const REDUCED = process.argv.includes("--reduced");
   assert(await page.evaluate(() => document.body.dataset.screen) === "checkpoint", "interrupted start ends cleanly");
   await page.click("[data-action=home]"); await settle(800);
 
+  // ---- a Home bubble opens card detail with a morph and Back returns Home
+  await page.click("#upnext .bubble"); await settle(1000);
+  assert(await page.evaluate(() => document.body.dataset.screen === "card" && !document.querySelector("body > .bubble")), "home bubble opens card detail");
+  await page.click("[data-action=back]"); await settle(900);
+  assert(await page.evaluate(() => document.body.dataset.screen) === "home", "back from a home-opened card returns home");
+
   // ---- library, card detail morph, star, add cards, search
   await page.click("#tabbar [data-tab=library]"); await settle(800);
   assert(await page.evaluate(() => document.body.dataset.screen) === "library", "library tab");

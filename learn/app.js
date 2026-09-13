@@ -549,7 +549,13 @@
     }
     updateTabbar(); updateSheet();
   }
-  function back() { const from = current?.id; if (from === "card" || from === "add") go("library"); else if (from === "tutor") { if (inRound()) go("round"); else showHome(); } else showHome(); }
+  function back() {
+    const from = current?.id, origin = current?.params?.from;
+    if (from === "card" && origin === "home") showHome();
+    else if (from === "card" || from === "add") go("library");
+    else if (from === "tutor") { if (inRound()) go("round"); else showHome(); }
+    else showHome();
+  }
   function updateTabbar() {
     const bar = $("#tabbar"); const show = TAB_SCREENS.includes(current?.id); bar.hidden = !show;
     if (!show) return;
@@ -572,7 +578,7 @@
     else if (a === "deck") { savePrefs({deck: b.dataset.deck}); await replan(); go("home", {}, {quiet: true}); }
     else if (a === "start") start();
     else if (a === "resume") resume();
-    else if (a === "card") { const src = b.classList.contains("bubble") ? b : $(".bubble", b); go("card", {id: b.dataset.card}, {morph: src ? {from: src} : null}); }
+    else if (a === "card") { const src = b.classList.contains("bubble") ? b : $(".bubble", b); go("card", {id: b.dataset.card, from: current?.id || "library"}, {morph: src ? {from: src} : null}); }
     else if (a === "back") back();
     else if (a === "home") { sheet.close(); showHome(); }
     else if (a === "done") { if (await perform("end")) { sheet.close(); showHome(); } }
