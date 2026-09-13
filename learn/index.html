@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Learn · Milkplexity</title>
+<meta name="description" content="Milkplexity Learn: short study rounds that start easy and only ask you to type in the hard test.">
+<meta id="theme-color" name="theme-color" content="#050709">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="../assets/favicon.png">
+<link rel="apple-touch-icon" href="../assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="learn.css">
+<script>
+  /* Theme before first paint: the app's own key, dark by default. */
+  try { document.documentElement.dataset.theme = localStorage.getItem("milk-theme") === "paper" ? "paper" : "dark"; } catch {}
+</script>
+</head>
+<body data-page="learn" data-screen="loading">
+<div id="app" class="app" aria-busy="true">
+  <section class="screen" data-screen="loading"><div class="content"><p class="loading" role="status">Opening your study space.</p></div></section>
+</div>
+<nav id="tabbar" class="tabbar" aria-label="Learn" hidden>
+  <span class="tab-indicator" aria-hidden="true"></span>
+  <button type="button" class="tab" data-action="tab" data-tab="home" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/></svg><span>Home</span></button>
+  <button type="button" class="tab" data-action="tab" data-tab="library"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h10M7 14h6"/></svg><span>Cards</span></button>
+  <button type="button" class="tab" data-action="tab" data-tab="tutor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Tutor</span></button>
+</nav>
+<div id="scrim" class="scrim" hidden></div>
+<section id="sheet-progress" class="sheet" hidden></section>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="motion.js"></script>
+<script src="decks.js"></script>
+<script src="engine.js"></script>
+<script src="sheet.js"></script>
+<script src="segmented.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
