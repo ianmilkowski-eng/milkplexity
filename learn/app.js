@@ -21,7 +21,6 @@
   const CAPTIONS = {easy: "Tap the answer. Builds Familiar.", recall: "Think, flip, rate yourself. Builds Familiar.", hard: "Typed unaided once a card is Familiar. The only way to Mastered."};
   const FORMATS = {multiple_choice: "Choose the answer", true_false: "Is this the match?", flashcard: "Think, then reveal", written: "Type what you remember"};
   const PILL = [{value: "easy", label: "Easy", hint: CAPTIONS.easy}, {value: "recall", label: "Recall", hint: CAPTIONS.recall}, {value: "hard", label: "Hard test", hint: CAPTIONS.hard}];
-  const STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "and", "or", "for", "is", "are", "what", "which", "how", "vs", "versus", "with", "by"]);
   const PREFS_KEY = "milkplexity-learn-prefs-v1";
   const TAB_SCREENS = ["home", "library", "tutor"];
 
@@ -49,18 +48,14 @@
     toast.timer = setTimeout(() => M.animate(t, {y: 8, opacity: 0}, {preset: "snappy", onRest: () => { t.hidden = true; }}), 3200);
   }
   const fmtDate = iso => new Date(iso).toLocaleString(undefined, {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
-  function monogram(front) {
-    const words = front.split(/[^\p{L}\p{N}]+/u).filter(w => w && !STOP.has(w.toLowerCase()));
-    const list = words.length ? words : front.split(/\s+/).filter(Boolean);
-    if (!list.length) return "?";
-    if (list.length === 1) return list[0].slice(0, 2).replace(/^./u, c => c.toUpperCase());
-    return (list[0][0] + list[1][0]).toUpperCase();
-  }
-  function bubble(card, {size = 56, cls = "", state = "", tag = "span", attrs = ""} = {}) {
+  /* A bubble is a card's place in the round: its number, a ring in its
+     mastery colour, a tint from its set, and a result badge once answered. */
+  function bubble(card, {size = 56, cls = "", state = "", tag = "span", attrs = "", label = ""} = {}) {
     const glyph = state === "correct" ? '<i class="badge ok" aria-hidden="true">✓</i>' : state === "miss" ? '<i class="badge miss" aria-hidden="true">↻</i>' : "";
     const deck = view && view.decks.find(d => d.id === card.deck);
-    return `<${tag} class="bubble ${cls}" data-card="${esc(card.id)}" data-mastery="${esc(card.mastery || "NEW")}" data-state="${state}" style="--bubble:${size}px${deck ? `;--hue:${deck.hue}` : ""}" ${attrs}><span class="mono" aria-hidden="true">${esc(monogram(card.front))}</span>${glyph}</${tag}>`;
+    return `<${tag} class="bubble ${cls}" data-card="${esc(card.id)}" data-mastery="${esc(card.mastery || "NEW")}" data-state="${state}" style="--bubble:${size}px${deck ? `;--hue:${deck.hue}` : ""}" ${attrs}><span class="num" aria-hidden="true">${esc(String(label))}</span>${glyph}</${tag}>`;
   }
+  const dot = card => `<span class="dot" data-mastery="${esc(card.mastery || "NEW")}" aria-hidden="true"></span>`;
   const themeButton = () => `<button type="button" class="icon-btn" data-action="theme" aria-label="${document.documentElement.dataset.theme === "paper" ? "Dark mode" : "Paper mode"}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>`;
   function fly(m) { flights.add(m); const check = () => { if (m.done) flights.delete(m); else requestAnimationFrame(check); }; check(); return m; }
   function cancelFlights() { for (const m of flights) m.cancel(); flights.clear(); }
@@ -155,7 +150,7 @@
 <div class="content">
   <section class="block" data-stagger><p class="eyebrow">Studying</p><div class="chips" role="group" aria-label="Cards to study">${decks.map(d => `<button type="button" class="chip ${cfg.deck === d.id ? "on" : ""}" data-action="deck" data-deck="${d.id}" aria-pressed="${cfg.deck === d.id}">${esc(d.name)}${d.id !== "all" && d.due ? `<span class="chip-count">${d.due}</span>` : ""}</button>`).join("")}</div></section>
   <section class="block" data-stagger><p class="eyebrow">${active ? "In progress" : "Up next"}</p>
-    ${preview.length ? `<div class="bubble-row" id="upnext" role="list" aria-label="Cards in the next round">${preview.map(c => bubble(c, {size: 56, tag: "button", attrs: `type="button" role="listitem" data-action="card" aria-label="${esc(c.front)}, ${MASTERY[c.mastery]}"`})).join("")}${plan.total > preview.length ? `<span class="bubble tail" style="--bubble:56px" aria-label="${plan.total - preview.length} more"><span class="mono">+${plan.total - preview.length}</span></span>` : ""}</div>` : `<p class="empty">Nothing is due right now. Study all cards from Options, or add new ones.</p>`}
+    ${preview.length ? `<div class="bubble-row" id="upnext" role="list" aria-label="Cards in the next round">${preview.map((c, i) => `<div class="bubble-item" role="listitem">${bubble(c, {size: 56, tag: "button", label: i + 1, attrs: `type="button" data-action="card" aria-label="${i + 1}. ${esc(c.front)}, ${MASTERY[c.mastery]}"`})}<span class="bubble-label" aria-hidden="true">${esc(c.front)}</span></div>`).join("")}${plan.total > preview.length ? `<div class="bubble-item" role="listitem" aria-label="${plan.total - preview.length} more after this round"><span class="bubble tail" style="--bubble:56px"><span class="num">+${plan.total - preview.length}</span></span><span class="bubble-label" aria-hidden="true">later</span></div>` : ""}</div>` : `<p class="empty">Nothing is due right now. Study all cards from Options, or add new ones.</p>`}
   </section>
   <section class="card start-card" data-stagger>
     <p class="count-line">${active ? `Round ${s.round} · ${s.index} of ${s.queue.length} answered` : preview.length ? `${preview.length} card${preview.length === 1 ? "" : "s"} this round${plan.fresh ? ` · ${plan.fresh} new` : ""}` : "No cards this round"}</p>
@@ -200,7 +195,7 @@
     return s.queue.map((id, i) => {
       const c = cardOf(id) || {id, front: "?", mastery: "NEW"};
       const state = i < s.index ? (s.round_results[i]?.correct ? "correct" : "miss") : i === s.index ? "current" : "upcoming";
-      return bubble(c, {size: 28, cls: "qbubble", state});
+      return bubble(c, {size: 28, cls: "qbubble", state, label: i + 1});
     }).join("");
   }
   function roundHTML() {
@@ -209,7 +204,7 @@
   <div class="queue" role="progressbar" aria-label="Questions completed in this round" aria-valuemin="0" aria-valuemax="${s.queue.length}" aria-valuenow="${s.index}">${queueHTML(s)}</div>
   <button type="button" class="chip mode-chip" data-action="sheet-half" aria-label="${esc(E.MODES[s.config.mode].label)} mode. Open progress and options">${esc(E.MODES[s.config.mode].label)}</button></header>
 <div class="content">
-  <div class="stage">${bubble(card, {size: 64, cls: "stage-avatar", attrs: "data-morph-target"})}<div class="stage-text"><p class="eyebrow" id="stage-count">Question ${s.index + 1} of ${s.queue.length}</p><p class="format" id="stage-format">${FORMATS[q.type]}</p></div></div>
+  <div class="stage">${bubble(card, {size: 64, cls: "stage-avatar", label: s.index + 1, attrs: "data-morph-target"})}<div class="stage-text"><p class="eyebrow" id="stage-count">Question ${s.index + 1} of ${s.queue.length}</p><p class="format" id="stage-format">${FORMATS[q.type]}</p></div></div>
   <div id="qarea" class="qarea">${questionHTML()}</div>
 </div>`;
   }
@@ -314,7 +309,7 @@
       oldGhost.insertAdjacentHTML("beforeend", prevCorrect ? '<i class="badge ok" aria-hidden="true">✓</i>' : '<i class="badge miss" aria-hidden="true">↻</i>');
       if (slot) fly(M.morph({ghost: oldGhost, from: stageRect, to: slot, hide: [slot], reveal: [slot]}));
       const nextCard = cardOf(s2.question.card_id);
-      stage.outerHTML = bubble(nextCard, {size: 64, cls: "stage-avatar", attrs: "data-morph-target"});
+      stage.outerHTML = bubble(nextCard, {size: 64, cls: "stage-avatar", label: s2.index + 1, attrs: "data-morph-target"});
       const newStage = $(".stage-avatar"), nextSlot = $(`.qbubble[data-card="${nextCard.id}"]`);
       if (nextSlot && !M.reduced()) {
         const ghost = newStage.cloneNode(true); ghost.removeAttribute("data-morph-target");
@@ -337,7 +332,7 @@
     const s = session(); if (!s || !["question", "feedback"].includes(s.status)) return;
     const answered = s.status === "feedback";
     if (!await perform("tutor")) return;
-    tutorState = {context: session().tutor_context, card: cardOf(s.question.card_id), answered, turns: []};
+    tutorState = {context: session().tutor_context, card: cardOf(s.question.card_id), answered, turns: [], index: s.index + 1};
     const stage = $(".stage-avatar");
     go("tutor", {}, {morph: stage ? {from: stage} : null});
   }
@@ -348,7 +343,7 @@
     const all = s.counts.MASTERED === s.card_ids.length;
     const title = ended ? "Saved. Your cards keep their progress." : all ? "You recalled every card." : complete ? "A good place to pause." : "One round closer.";
     const acc = s.attempts ? Math.round(s.correct / s.attempts * 100) : 0;
-    const rows = s.round_results.map(r => `<li data-stagger>${bubble(cardOf(r.card_id) || {id: r.card_id, front: r.front, mastery: r.mastery}, {size: 40, state: r.correct ? "correct" : "miss"})}<span class="front">${esc(r.front)}</span><span class="state">${r.correct ? "✓" : "↻"} ${MASTERY[r.mastery]}</span></li>`).join("");
+    const rows = s.round_results.map((r, i) => `<li data-stagger>${bubble(cardOf(r.card_id) || {id: r.card_id, front: r.front, mastery: r.mastery}, {size: 40, state: r.correct ? "correct" : "miss", label: i + 1})}<span class="front">${esc(r.front)}</span><span class="state">${r.correct ? "✓" : "↻"} ${MASTERY[r.mastery]}</span></li>`).join("");
     return `<header class="topbar"><span class="spacer"></span><p class="topbar-title">${ended ? "Session saved" : `Round ${s.round} done`}</p><span class="spacer"></span></header>
 <div class="content">
   <h2 class="big-title" id="summary" tabindex="-1" data-stagger>${title}</h2>
@@ -387,7 +382,7 @@
     const q = libFilter.query.trim().toLowerCase(), kind = libFilter.kind;
     const cards = view.cards.filter(c => (!q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q))
       && (kind === "all" || (kind === "due" && (c.due <= new Date().toISOString() || c.mastery === "NEW")) || (kind === "starred" && c.starred) || (kind === "mastered" && c.mastery === "MASTERED")));
-    const rows = cards.map(c => `<li data-stagger><button type="button" class="row-btn lib-row" data-action="card" data-card="${c.id}">${bubble(c, {size: 40})}<span class="texts"><span class="front">${esc(c.front)}</span><span class="back">${esc(c.back)}</span></span><span class="state">${MASTERY[c.mastery]}</span></button><button type="button" class="icon-btn star" data-action="star" data-card="${c.id}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} ${esc(c.front)}">${c.starred ? "★" : "☆"}</button></li>`).join("");
+    const rows = cards.map(c => `<li data-stagger><button type="button" class="row-btn lib-row" data-action="card" data-card="${c.id}">${dot(c)}<span class="texts"><span class="front">${esc(c.front)}</span><span class="back">${esc(c.back)}</span></span><span class="state">${MASTERY[c.mastery]}</span></button><button type="button" class="icon-btn star" data-action="star" data-card="${c.id}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} ${esc(c.front)}">${c.starred ? "★" : "☆"}</button></li>`).join("");
     return `<header class="topbar"><h1 class="topbar-title left">Cards</h1><span class="spacer"></span><button type="button" class="secondary small" data-action="add">Add cards</button></header>
 <div class="content">
   <input type="search" id="lib-search" class="search" placeholder="Find a card" value="${esc(libFilter.query)}" aria-label="Find a card" data-stagger>
@@ -400,7 +395,7 @@
     const aliases = (c.aliases?.[view.config.answer_with] || []).join("\n");
     return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button><span class="spacer"></span><button type="button" class="icon-btn star" data-action="star" data-card="${c.id}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} this card">${c.starred ? "★" : "☆"}</button></header>
 <div class="content">
-  <div class="stage">${bubble(c, {size: 64, cls: "stage-avatar", attrs: "data-morph-target"})}<h2 class="prompt tight">${esc(c.front)}</h2></div>
+  <div class="card-head" data-stagger><span class="chip static">${esc((view.decks.find(d => d.id === c.deck) || {name: "Cards"}).name)}</span><h2 class="prompt tight">${esc(c.front)}</h2></div>
   <section class="card" data-stagger><button type="button" class="secondary" id="reveal-card" data-action="reveal-card">Reveal answer</button><p class="answer-text ref" id="card-answer" hidden>${esc(c.back)}</p></section>
   <section class="block" data-stagger><h3 class="section-title">Mastery</h3><div class="row"><span>Answering with the ${view.config.answer_with === "back" ? "answer" : "term"}</span><strong>${MASTERY[c.mastery]}</strong></div><p class="caption">Next review ${esc(fmtDate(c.due))}. Mastered only through the Hard test.</p></section>
   <section class="block" data-stagger><h3 class="section-title">Notes</h3><form id="note-form" data-card="${c.id}"><label>Note<textarea id="note" rows="2" maxlength="3000">${esc(c.note)}</textarea></label><label>Mnemonic<textarea id="mnemonic" rows="2" maxlength="3000">${esc(c.mnemonic)}</textarea></label><label>Accepted answers, one per line<textarea id="aliases" rows="2">${esc(aliases)}</textarea></label><button type="submit" class="secondary">Save notes</button></form></section>
@@ -422,7 +417,7 @@
     const t = tutorState, ctx = t?.context;
     return `<header class="topbar"><button type="button" class="text-btn" data-action="back">Done</button><p class="topbar-title">Tutor</p><span class="spacer"></span></header>
 <div class="content">
-  <div class="stage">${ctx ? bubble(t.card, {size: 64, cls: "stage-avatar", attrs: "data-morph-target"}) : ""}<div class="stage-text"><h2 class="section-title">Talk it through.</h2><div id="tutor-mode"></div></div></div>
+  <div class="stage">${ctx ? bubble(t.card, {size: 64, cls: "stage-avatar", label: t.index, attrs: "data-morph-target"}) : ""}<div class="stage-text"><h2 class="section-title">Talk it through.</h2><div id="tutor-mode"></div></div></div>
   <div class="notice" data-stagger><strong>Preview only.</strong> In the app, your tutor answers from your own Claude or Codex subscription, with this card as its context.</div>
   ${ctx ? `<section class="card" data-stagger><p class="caption">Card context shared with your tutor</p><p class="answer-text">${esc(ctx.prompt)}</p>${ctx.your_answer ? `<p class="caption">Your answer</p><p>${esc(ctx.your_answer)}</p>` : ""}${t.answered ? `<p class="caption">Reference answer</p><p>${esc(ctx.reference_answer)}</p>` : `<p class="caption">The reference answer is shared with the tutor. Asking before you answer marks this question as practice.</p>`}</section>` : `<p class="empty" data-stagger>Open the tutor from a question to share that card's context.</p>`}
   <div class="chips wrap" data-stagger>${["Explain this", "Why was I wrong?", "Give me a mnemonic", "Quiz me on this"].map(l => `<button type="button" class="chip" data-action="tutor-chip" data-chip="${esc(l)}" ${ctx ? "" : "disabled"}>${l}</button>`).join("")}</div>
@@ -460,7 +455,7 @@
     const s = session(), live = inRound(), atCheckpoint = Boolean(s && ["checkpoint", "complete"].includes(s.status)), cfg = config();
     const mode = queuedMode || (s && s.status !== "ended" ? s.config.mode : cfg.mode);
     const strip = live ? `<span class="strip-title">Round ${s.round} · ${s.index} of ${s.queue.length}</span><span class="muted">${s.counts.FAMILIAR} Familiar · ${s.counts.MASTERED} Mastered${s.misses.length ? ` · ${s.misses.length} miss${s.misses.length === 1 ? "" : "es"}` : ""}</span>` : `<span class="strip-title">Progress and options</span><span class="muted">${view.counts.MASTERED} of ${view.total} mastered</span>`;
-    const results = s && s.round_results?.length ? `<h3 class="section-title">This round</h3><ul class="result-list">${s.round_results.map(r => `<li>${bubble(cardOf(r.card_id) || {id: r.card_id, front: r.front, mastery: r.mastery}, {size: 40, state: r.correct ? "correct" : "miss"})}<span class="front">${esc(r.front)}</span><span class="state">${r.correct ? "✓" : "↻"} ${MASTERY[r.mastery]}</span></li>`).join("")}</ul>` : "";
+    const results = s && s.round_results?.length ? `<h3 class="section-title">This round</h3><ul class="result-list">${s.round_results.map((r, i) => `<li>${bubble(cardOf(r.card_id) || {id: r.card_id, front: r.front, mastery: r.mastery}, {size: 40, state: r.correct ? "correct" : "miss", label: i + 1})}<span class="front">${esc(r.front)}</span><span class="state">${r.correct ? "✓" : "↻"} ${MASTERY[r.mastery]}</span></li>`).join("")}</ul>` : "";
     const locked = Boolean(s && !["complete", "ended"].includes(s.status));
     return `<div class="sheet-handle" data-sheet-handle><span></span></div>
 <div class="sheet-strip" data-sheet-header>${strip}<button type="button" class="icon-btn small" data-sheet-expand aria-label="Expand or collapse">⤢</button></div>

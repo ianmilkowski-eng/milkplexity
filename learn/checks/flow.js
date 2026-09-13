@@ -10,7 +10,7 @@ const REDUCED = process.argv.includes("--reduced");
   const page = await ctx.newPage(); page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
-  page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("console", m => { if (m.type() === "error" && !/fonts\.(googleapis|gstatic)/.test(m.location()?.url || "")) errors.push("console: " + m.text()); });
   const shot = async name => page.screenshot({path: path.join(SHOTS, `${REDUCED ? "rm-" : ""}${name}.png`)});
   const smallTargets = async label => {
     const small = await page.evaluate(() => [...document.querySelectorAll("button:not([hidden]), [role=button], a[href]")].filter(b => { const r = b.getBoundingClientRect(); const cs = getComputedStyle(b); return r.width && r.height && cs.visibility !== "hidden" && (r.width < 44 || r.height < 44); }).map(b => (b.textContent || b.getAttribute("aria-label") || "").trim().slice(0, 30) + ` ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`));
@@ -20,8 +20,10 @@ const REDUCED = process.argv.includes("--reduced");
   };
   const view = () => page.evaluate(() => window.Learn.view);
   const settle = (ms = 900) => page.waitForTimeout(REDUCED ? 60 : ms);
-  await page.goto(base + "/learn/", {waitUntil: "networkidle"});
-  await page.evaluate(() => { localStorage.clear(); }); await page.reload({waitUntil: "networkidle"}); await settle(700);
+  /* Web fonts are not part of the functional check; skip them unless FONTS=1 so an offline sandbox never stalls on them. */
+  if (!process.env.FONTS) await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+  await page.goto(base + "/learn/", {waitUntil: "load"});
+  await page.evaluate(() => { localStorage.clear(); }); await page.reload({waitUntil: "load"}); await settle(700);
   await smallTargets("home");
   const roundTrip = await page.evaluate(() => { const E = window.LearnEngine; const bad = []; for (const c of window.Learn.view.cards) for (const side of ["front", "back"]) { const rb = window.Learn.makeRebuild(c[side], c.id + side); const joined = rb.tiles.map(t => (t.space ? " " : "") + t.text).join("").trim(); if (!E.grade(joined, c[side], "exact") || rb.tiles.length > 8 || rb.tiles.length < 2) bad.push([c[side], joined, rb.tiles.length]); } return bad; });
   assert(!roundTrip.length, "rebuild tiles round-trip exact grading for every card: " + JSON.stringify(roundTrip.slice(0, 3)));

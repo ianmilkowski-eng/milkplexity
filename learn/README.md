@@ -27,6 +27,12 @@ the private ledger.
 - **A tutor preview** that shows the card context the app would send, the
   exact prompt, and chip replies built only from the card's own text.
 
+Type is Outfit for headings and numerals and Plus Jakarta Sans for everything else,
+loaded from Google Fonts with a system fallback stack. That is a deliberate
+change from the app's system-font rule, made at Ian's request; the tokens are
+`--display` and `--sans` in `learn.css`. Bubbles carry a card's number in the
+round with its name beneath, never initials.
+
 Motion tokens follow the brief: standard spring (response .35 s, damping .75)
 for layout and flights; snappy (.2 s, .6) for presses, badges and the pill;
 30 ms staggered entry; press scale .96 with a light haptic where supported.
