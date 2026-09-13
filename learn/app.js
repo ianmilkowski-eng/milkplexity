@@ -18,7 +18,7 @@
   const api = (path, body, method) => engine.api(path, body, method);
 
   const MASTERY = {NEW: "New", SEEN: "Seen", FAMILIAR: "Familiar", MASTERED: "Mastered"};
-  const CAPTIONS = {easy: "Tap the answer. Builds Familiar.", recall: "Think, flip, rate yourself. Builds Familiar.", hard: "Typed unaided once a card is Familiar. The only way to Mastered."};
+  const CAPTIONS = {easy: "Tap the answer. Builds Familiar.", recall: "Think, flip, rate yourself. Builds Familiar.", hard: "Type it unaided. The only way to Mastered."};
   const FORMATS = {multiple_choice: "Choose the answer", true_false: "Is this the match?", flashcard: "Think, then reveal", written: "Type what you remember"};
   const PILL = [{value: "easy", label: "Easy", hint: CAPTIONS.easy}, {value: "recall", label: "Recall", hint: CAPTIONS.recall}, {value: "hard", label: "Hard test", hint: CAPTIONS.hard}];
   const PREFS_KEY = "milkplexity-learn-prefs-v1";
@@ -169,7 +169,7 @@
   /* The format the set will actually get, so the pill never overpromises. */
   function formatLine(mode, preview, plan) {
     if (!plan || !plan.total) return "";
-    if (mode === "hard") { const flips = preview.filter(c => !["FAMILIAR", "MASTERED"].includes(c.mastery)).length; return flips ? `${flips} of these ${flips === 1 ? "card flips" : "cards flip"} first; typing starts once a card is Familiar.` : "Every card in this round is typed."; }
+    if (mode === "hard") { const fresh = preview.filter(c => !["FAMILIAR", "MASTERED"].includes(c.mastery)).length; return fresh ? `Every card is typed. ${fresh === 1 ? "One card here needs" : `${fresh} cards here need`} two wins: the first makes ${fresh === 1 ? "it" : "them"} Familiar.` : "Every card is typed. A win here makes it Mastered."; }
     if (mode === "easy") return plan.total >= 4 ? "Four choices, one tap. No typing." : plan.total >= 2 ? "Small set: true or false until four different answers are in play." : "A set of one: reveal and rate.";
     return "Tap to reveal, then rate yourself. No typing.";
   }

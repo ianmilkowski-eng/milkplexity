@@ -12,7 +12,7 @@ the private ledger.
 - **Three modes on one pill.** Easy asks you to choose (four options from the
   set; true or false when a set is tiny). Recall asks you to think, reveal and
   rate yourself. Hard test asks you to type, and only an unaided typed answer
-  on a Familiar card reaches Mastered. New cards in the Hard test flip first,
+  on a Familiar card reaches Mastered, so a new card needs two typed wins,
   exactly as the app's `drill.py` decides.
 - **Rounds you can see.** The Up-next row on Home shows the cards of the next
   round. Start morphs the first bubble onto the round's stage; every answered

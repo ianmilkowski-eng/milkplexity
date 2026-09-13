@@ -8,7 +8,8 @@
    What changed for this design: a three-way mode replaces the question-type
    checklist. Easy asks you to choose; Recall asks you to think, then
    reveal and rate yourself; only the Hard test asks you to type, and only a typed, unaided
-   answer moves a Familiar card to Mastered (drill.py's rule, unchanged).
+   answer moves a Familiar card to Mastered (drill.py's rule, unchanged), so a
+   new card needs two typed wins.
 
    The public surface is api(path, body), the same paths the app exposes at
    /api/learn, so app.js can be pointed at the real server by replacing one
@@ -199,7 +200,7 @@
       let kind;
       if (mode.types.includes("written") && (["FAMILIAR", "MASTERED"].includes(mem.mastery) || !pool.length)) kind = "written";
       else {
-        const usable = mode.types.filter(t => (t !== "multiple_choice" || pool.length >= 3) && (t !== "true_false" || pool.length) && t !== "written");
+        const usable = mode.types.filter(t => (t !== "multiple_choice" || pool.length >= 3) && (t !== "true_false" || pool.length));
         kind = usable[0] || "flashcard";
         if (mode.alternate && usable.length > 1 && mem.seen % 2 === 1) kind = usable[1];
       }
