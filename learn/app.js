@@ -64,7 +64,12 @@
   const themeButton = () => `<button type="button" class="icon-btn" data-action="theme" aria-label="${document.documentElement.dataset.theme === "paper" ? "Dark mode" : "Paper mode"}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>`;
   function fly(m) { flights.add(m); const check = () => { if (m.done) flights.delete(m); else requestAnimationFrame(check); }; check(); return m; }
   function cancelFlights() { for (const m of flights) m.cancel(); flights.clear(); }
-  function fadeText(el, text) { if (!el || el.textContent === text) return; M.animate(el, {opacity: 0}, {preset: "snappy", onRest: () => { el.textContent = text; M.animate(el, {opacity: 1}, {preset: "snappy"}); }}); }
+  function fadeText(el, text) {
+    if (!el) return;
+    if ((el.dataset.pendingText ?? el.textContent) === text) return;
+    el.dataset.pendingText = text;
+    M.animate(el, {opacity: 0}, {preset: "snappy", onRest: () => { el.textContent = el.dataset.pendingText ?? text; delete el.dataset.pendingText; M.animate(el, {opacity: 1}, {preset: "snappy"}); }});
+  }
   function sound(correct) {
     if (!config().sound) return;
     try { const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return; const ctx = new Ctx(), osc = ctx.createOscillator(), gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.frequency.value = correct ? 660 : 330; gain.gain.setValueAtTime(.035, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .16); osc.start(); osc.stop(ctx.currentTime + .17); osc.onended = () => ctx.close(); } catch {}
@@ -312,8 +317,9 @@
       stage.outerHTML = bubble(nextCard, {size: 64, cls: "stage-avatar", attrs: "data-morph-target"});
       const newStage = $(".stage-avatar"), nextSlot = $(`.qbubble[data-card="${nextCard.id}"]`);
       if (nextSlot && !M.reduced()) {
+        const ghost = newStage.cloneNode(true); ghost.removeAttribute("data-morph-target");
         newStage.style.visibility = "hidden";
-        setTimeout(() => { if (!newStage.isConnected) return; fly(M.morph({ghost: newStage.cloneNode(true), from: nextSlot, to: newStage, reveal: [newStage]})); }, 40);
+        setTimeout(() => { if (!newStage.isConnected) return; fly(M.morph({ghost, from: nextSlot, to: newStage, reveal: [newStage]})); }, 40);
       }
     }
     const count = $("#stage-count"), format = $("#stage-format");
@@ -479,8 +485,13 @@
   <button type="button" class="text-btn danger" data-action="reset">Reset the sample cards</button>
 </div>`;
   }
-  function renderSheet() {
+  let sheetDirty = false;
+  function renderSheet(force = false) {
     if (!sheet || sheet.drag) return;
+    /* An open sheet is never rebuilt under the user: the render waits until
+       it returns to the peek strip or closes. */
+    if (sheet.modal && !force) { sheetDirty = true; return; }
+    sheetDirty = false;
     sheet.el.innerHTML = sheetHTML();
     const s = session(), live = inRound();
     new window.Pill({el: $("#sheet-pill"), options: PILL, value: queuedMode || (s && s.status !== "ended" ? s.config.mode : config().mode), label: "How demanding the questions are", onChange: async v => {
@@ -541,7 +552,7 @@
     if (!quiet) {
       const bar = $(".topbar", el); if (bar) M.animate(bar, {y: 0, opacity: 1}, {from: {y: -24, opacity: 0}});
       M.stagger($$("[data-stagger]", el).slice(0, 16), {from: {y: 16, opacity: 0}, start: 40});
-      if (id === "round") { const items = [...$("#qarea", el).children].flatMap(x => x.classList.contains("tiles") ? [...x.children] : [x]); M.stagger(items, {from: {y: 16, opacity: 0}, start: 120}); }
+      if (id === "round") { const items = [...$("#qarea", el).children].flatMap(x => x.classList.contains("tiles") ? [...x.children] : [x]); items.forEach((x, i) => M.animate(x, {y: 0, opacity: x.classList.contains("dim") ? .45 : 1}, {from: {y: 16, opacity: 0}, delay: 120 + i * 30})); }
     }
     if (morph && morph.from) {
       const target = $("[data-morph-target]", el);
@@ -599,7 +610,7 @@
     else if (a === "sheet-full") sheet.open("full");
     else if (a === "add") go("add");
     else if (a === "lib-filter") { libFilter.kind = b.dataset.kind; go("library", {}, {quiet: true}); }
-    else if (a === "star") { const c = cardOf(b.dataset.card); if (!c) return; try { await api(`/cards/${c.id}/edit`, {starred: !c.starred}); await refresh(); for (const x of $$(`[data-action=star][data-card="${c.id}"]`)) { x.setAttribute("aria-pressed", String(!c.starred)); x.textContent = !c.starred ? "★" : "☆"; } M.animate(b, {scale: 1}, {preset: "snappy", from: {scale: 1.3}}); } catch (err) { toast(err.message); } }
+    else if (a === "star") { const c = cardOf(b.dataset.card); if (!c) return; try { await api(`/cards/${c.id}/edit`, {starred: !c.starred}); await refresh(); for (const x of $$(`[data-action=star][data-card="${c.id}"]`)) { x.setAttribute("aria-pressed", String(!c.starred)); x.textContent = !c.starred ? "★" : "☆"; } M.animate(b, {scale: 1}, {preset: "snappy", velocity: {scale: 5}}); } catch (err) { toast(err.message); } }
     else if (a === "reveal-card") { const p = $("#card-answer"); p.hidden = false; b.hidden = true; M.animate(p, {y: 0, opacity: 1}, {from: {y: 8, opacity: 0}}); }
     else if (a === "delete-card") { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to delete this card"; return; } try { await api(`/cards/${b.dataset.card}`, null, "DELETE"); await refresh(); toast("Card deleted."); go("library"); } catch (err) { toast(err.message); } }
     else if (a === "reset") { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to reset every card and its progress"; return; } view = await api("/reset"); queuedMode = null; rebuild = null; sheet.close(); toast("Sample cards restored."); showHome(); }
@@ -617,7 +628,17 @@
     draftTimer = setTimeout(async () => { if (!inRound() || session().status !== "question") return; if (await perform("draft", {text: value})) { const st = $("#draft-status"); if (st) st.textContent = "Draft saved privately."; } }, 700);
   });
   document.addEventListener("change", e => { if (e.target.id?.startsWith("opt-")) optionChange(e.target); });
-  document.addEventListener("focusin", e => { if (e.target.id === "answer") { sheet.suspend(); setTimeout(() => e.target.scrollIntoView({block: "center", behavior: "smooth"}), 120); } });
+  /* The peek strip steps aside only while the software keyboard is up
+     (visualViewport shrinks); where visualViewport is missing, focus on the
+     answer field stands in for it. */
+  let keyboardWatched = false;
+  function watchKeyboard() {
+    const vv = window.visualViewport; if (!vv) return;
+    keyboardWatched = true;
+    const check = () => { const covered = window.innerHeight - vv.height; if (covered > 120 && document.activeElement?.id === "answer") sheet.suspend(); else sheet.resume(); };
+    vv.addEventListener("resize", check);
+  }
+  document.addEventListener("focusin", e => { if (e.target.id === "answer") { if (!keyboardWatched) sheet.suspend(); setTimeout(() => e.target.scrollIntoView({block: "center", behavior: M.reduced() ? "auto" : "smooth"}), 120); } });
   document.addEventListener("focusout", e => { if (e.target.id === "answer") setTimeout(() => { if (document.activeElement?.id !== "answer") sheet.resume(); }, 80); });
   document.addEventListener("keydown", e => {
     if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
@@ -645,7 +666,9 @@
     M.pressable(document, ".primary, .secondary, .tile, .chip, .bubble-row .bubble, .rtile, .tab, .row-btn, .icon-btn, .text-btn, .flip");
     view = await api("/drill");
     loadPrefs();
-    sheet = new window.Sheet({el: "#sheet-progress", scrim: "#scrim", main: "#app", half: .54, peek: 0, label: "Progress and options"});
+    sheet = new window.Sheet({el: "#sheet-progress", scrim: "#scrim", main: "#app", inert: ["#tabbar"], half: .54, peek: 0, label: "Progress and options",
+      onChange: detent => { if ((detent === "peek" || detent === "closed") && sheetDirty) renderSheet(); }});
+    watchKeyboard();
     const s = session();
     if (s && ["question", "feedback"].includes(s.status)) go("round");
     else if (s && ["checkpoint", "complete"].includes(s.status)) go("checkpoint");

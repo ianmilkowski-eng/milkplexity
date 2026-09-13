@@ -17,9 +17,9 @@
   const M = window.Motion;
   const ORDER = ["full", "half", "peek", "closed"];
   class Sheet {
-    constructor({el, scrim, main, half = .5, peek = 0, label = "Sheet", onChange}) {
+    constructor({el, scrim, main, inert = [], half = .5, peek = 0, label = "Sheet", onChange}) {
       const q = v => typeof v === "string" ? document.querySelector(v) : v;
-      this.el = q(el); this.scrim = q(scrim); this.main = q(main);
+      this.el = q(el); this.scrim = q(scrim); this.main = q(main); this.others = inert.map(q).filter(Boolean);
       this.halfFraction = half; this.peekHeight = peek;
       this.onChange = onChange || null;
       this.state = "closed"; this.height = 0; this.y = 0; this.detents = {full: 0, half: 0, peek: 0, closed: 0};
@@ -76,11 +76,13 @@
         this.returnFocus = document.activeElement;
         this.scrim.hidden = false;
         if (this.main) this.main.inert = true;
+        for (const o of this.others) o.inert = true;
         this.el.setAttribute("aria-modal", "true");
         document.documentElement.classList.add("sheet-open");
         requestAnimationFrame(() => { const first = this.el.querySelector("[data-sheet-focus]") || this.el.querySelector("button, [href], input, textarea, select"); (first || this.el).focus({preventScroll: true}); });
       } else {
         if (this.main) { this.main.inert = false; }
+        for (const o of this.others) o.inert = false;
         this.el.removeAttribute("aria-modal");
         document.documentElement.classList.remove("sheet-open");
         if (this.returnFocus && this.returnFocus.isConnected && this.el.contains(document.activeElement)) this.returnFocus.focus({preventScroll: true});
@@ -126,7 +128,7 @@
     /* Drop out of the way (the software keyboard) and come back afterwards. */
     suspend() { if (this.suspended) return; this.suspended = true; if (this.state === "peek") { this.state = "closed"; this.el.dataset.state = "closing"; this.measure(); this.spring.set({y: this.detents.closed}); } }
     resume() { if (!this.suspended) return; this.suspended = false; if (this.peekHeight > 0 && this.state === "closed") this.to("peek"); }
-    refresh() { if (this.state !== "closed") { this.measure(); this.spring.set({y: this.detents[this.state]}); } }
+    refresh() { if (this.state !== "closed") { this.measure(); this.fitBody(this.state); this.spring.set({y: this.detents[this.state]}); } }
     toggle() { return this.modal ? this.close() : this.open(); }
 
     /* Drag zone: the whole sheet at peek or half; only the handle and header
@@ -139,11 +141,12 @@
       const el = this.el;
       el.addEventListener("pointerdown", e => {
         if (e.button !== 0 || this.state === "closed" || !this.canDrag(e.target)) return;
-        if (e.target.closest("button, a, input, textarea, select, [role=radio]") && !e.target.closest("[data-sheet-handle]")) { this.pending = {id: e.pointerId, y: e.clientY, x: e.clientX}; return; }
+        if (e.target.closest("button, a, input, textarea, select, label, [role=radio]") && !e.target.closest("[data-sheet-handle]")) { this.pending = {id: e.pointerId, y: e.clientY, x: e.clientX}; return; }
         this.begin(e);
       });
       el.addEventListener("pointermove", e => {
         if (this.pending && e.pointerId === this.pending.id && !this.drag) {
+          if (e.pointerType === "mouse" && e.buttons === 0) { this.pending = null; return; }
           const dy = e.clientY - this.pending.y, dx = e.clientX - this.pending.x;
           if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { this.begin(e, this.pending.y); this.pending = null; }
           return;
@@ -155,6 +158,7 @@
         if (raw < 0) y = M.rubberband(raw, this.height);
         else if (raw > floorY) y = floorY + M.rubberband(raw - floorY, this.height, .3);
         this.drag.tracker.push(e.clientY);
+        if (this.scrim.hidden && y < floorY - 1) this.scrim.hidden = false;
         this.spring.jump({y});
         const p = this.detents.half > 0 ? this.detents.half : 0;
         this.setModal(y < (this.detents[this.floor] + p) / 2);
@@ -178,6 +182,7 @@
         this.release(velocity);
       };
       el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+      window.addEventListener("pointerup", () => { this.pending = null; });
       this.scrim.addEventListener("click", () => this.close());
       el.addEventListener("keydown", e => { if (e.key === "Escape" && this.modal) { e.preventDefault(); this.close(); } });
       el.addEventListener("click", e => {

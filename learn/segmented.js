@@ -25,7 +25,10 @@
         if (next === null) return;
         e.preventDefault(); this.select(this.options[next].value); this.buttons[next].focus();
       });
-      window.addEventListener("resize", () => this.place(true));
+      /* A pill rendered inside a hidden sheet has no size yet; observe it so
+         the thumb lands the moment it becomes visible, and on every resize. */
+      if (window.ResizeObserver) { this.observer = new ResizeObserver(() => this.place(true)); this.observer.observe(this.el); }
+      else window.addEventListener("resize", () => this.place(true));
       requestAnimationFrame(() => this.place(true));
     }
     place(immediate = false) {

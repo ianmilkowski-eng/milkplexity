@@ -176,7 +176,7 @@ select { min-height: 40px; padding: 0 var(--space-3); border-radius: var(--radiu
 .prompt { font-size: var(--type-section); line-height: 1.35; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-2) 0 var(--space-3); }
 .tiles { display: grid; gap: 10px; }
 .tiles.two { grid-template-columns: 1fr 1fr; }
-.tile { display: flex; align-items: center; gap: var(--space-4); min-height: 64px; padding: var(--space-4); border-radius: var(--radius-control); border: 1px solid var(--separator-subtle); background: var(--surf); color: var(--ink); text-align: left; font-size: var(--type-body); line-height: 1.4; box-shadow: var(--shadow-soft); overflow-wrap: anywhere; transition: border-color 120ms ease-out, background 120ms ease-out, opacity 160ms ease-out; }
+.tile { display: flex; align-items: center; gap: var(--space-4); min-height: 64px; padding: var(--space-4); border-radius: var(--radius-control); border: 1px solid var(--separator-subtle); background: var(--surf); color: var(--ink); text-align: left; font-size: var(--type-body); line-height: 1.4; box-shadow: var(--shadow-soft); overflow-wrap: anywhere; transition: border-color 120ms ease-out, background 120ms ease-out; }
 .tile:hover { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .tile .slot { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--hair-2); color: var(--ink-soft); font-size: var(--type-meta); font-weight: 600; }
 .tile.correct { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, var(--surf)); }
@@ -282,7 +282,7 @@ form .secondary, form .primary { margin-top: var(--space-4); }
 .sheet .secondary { margin-top: var(--space-5); }
 
 /* ---- toast -------------------------------------------------------------- */
-.toast { position: fixed; left: 50%; bottom: calc(88px + var(--safe-bottom)); z-index: 50; transform: translateX(-50%); max-width: min(92vw, 480px); padding: var(--space-3) var(--space-5); border-radius: 999px; background: var(--surface-overlay); color: var(--ink); box-shadow: var(--shadow-pop); font-size: var(--type-label); margin-left: 0; }
+.toast { position: fixed; left: 16px; right: 16px; bottom: calc(88px + var(--safe-bottom)); z-index: 50; width: max-content; max-width: min(92vw, 480px); margin-inline: auto; padding: var(--space-3) var(--space-5); border-radius: 999px; background: var(--surface-overlay); color: var(--ink); box-shadow: var(--shadow-pop); font-size: var(--type-label); text-align: center; }
 
 /* ---- wider screens ------------------------------------------------------ */
 @media (min-width: 1024px) {
