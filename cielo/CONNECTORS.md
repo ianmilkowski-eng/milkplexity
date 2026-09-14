@@ -74,7 +74,7 @@ thin.
 | Body | Apple Health weight and body fat (smart scales write here). | Weight entry. | 2 | 1 |
 | Heart and recovery | Apple Health HRV, resting heart rate. Oura readiness in Phase 3. | "How do you feel" 1 to 5. | 2 | 2 |
 | Water, caffeine, alcohol | Apple Health has water and caffeine. MyFitnessPal does not send caffeine, so expect the manual lane to carry it. | One-tap counters. | 2 | 1 |
-| Finance | Plaid for cash, cards and Fidelity holdings (see below). SnapTrade as the brokerage-only alternative. | Fidelity CSV export dropped into the app and parsed on device; monthly manual balances. | 3 | 2 |
+| Finance | Plaid: Liabilities for the card bill, Transactions for line items, Investments for Fidelity holdings (see below). Teller as the free cards-and-cash alternative. SnapTrade for brokerage only. | Holdings ledger (ticker, shares, cost basis) priced by a public feed; OFX/CSV statement downloads parsed on device; a photo of the bill read by the on-device model. | 3 | 2 |
 | Calendar | EventKit on device, which already covers iCloud and Google accounts signed into the phone. No Google API needed. | Add an event. | 1 | 1 |
 | Tasks and habits | In-house. Reminders via EventKit if wanted. | Check-off. | 1 | 1 |
 | Study | The Learn prototype already in this repo, as a module. | n/a | 1 | 1 |
@@ -153,6 +153,51 @@ From there:
 - Mixed questions ("does spending track my sleep?") join on the phone.
   The cloud model sees sleep Observations and the finance card, nothing else.
 
+### The card bill and the share positions, specifically
+
+These are two different problems and each gets its own lanes.
+
+**Reading the credit card bill.** The bill is a statement, not a stream of
+transactions, and Plaid has a product for exactly that.
+
+- *Automatic.* Plaid `Liabilities` returns, per card: last statement
+  balance and issue date, minimum payment, next due date, last payment
+  amount and date, APRs, and an overdue flag, refreshed about once a day.
+  Plaid `Transactions` gives the line items with merchant and category.
+  Together they answer "what do I owe, when, and what is it made of".
+- *Cheaper automatic.* Teller connects straight to the bank and is free for
+  the first 100 live connections. It covers cards and cash but has no
+  investments product, so it is a fit if Plaid's Trial cap runs out before
+  the brokerage side matters.
+- *Manual, structured.* Every card issuer offers an OFX, QFX or CSV
+  download of the statement (Apple Card exports from Wallet). Drop the file
+  in and parse it on device. This is the zero-server, zero-third-party lane.
+- *Manual, unstructured.* A photo or PDF of the bill read by the on-device
+  model with a guided-generation schema: statement balance, due date,
+  minimum, line items. It stays in the Vault because the reader is local.
+
+**Entering the shares.** Split the question in two: *what do I own* is
+Vault data; *what is it worth* is public data. Keep them apart and join
+them on the phone.
+
+- *Holdings ledger (the manual lane, and the one to build first).* Ticker,
+  quantity, cost basis, account nickname. That is the whole record. Price
+  it with a public market-data feed: Alpha Vantage and Finnhub have free
+  keys, Twelve Data and Polygon are the paid step up. The feed only ever
+  sees tickers, never quantities. If even the ticker list feels like too
+  much to reveal, pull an end-of-day snapshot of a broad index list plus
+  your extras so the query does not spell out the portfolio.
+- *Broker CSV import.* Fidelity's Positions and Activity exports, parsed on
+  device into the same ledger. Ghostfolio's importer formats are a good
+  reference for the parser; Ghostfolio itself (open source, AGPL,
+  self-hosted) is a full portfolio tracker you could run at home instead of
+  building the finance math, but it is a server holding your positions, so
+  it belongs on a machine you own, never in a cloud.
+- *Automatic.* Plaid `Investments` (or SnapTrade) fills the same ledger
+  from Fidelity by OAuth, with holdings, cost basis and transactions. It is
+  the convenience layer over the ledger, not a separate store, which is
+  rule 1 again.
+
 ## The Observation record
 
 ```
@@ -217,6 +262,9 @@ Manual entry is just a connector whose `pull` is the form.
 - MyFitnessPal Apple Health sync (meal summaries, no caffeine, no timestamps): https://support.myfitnesspal.com/hc/en-us/articles/360032271092-Apple-Health-FAQ-and-Troubleshooting
 - Fidelity blocks scrapers, routes through Akoya: https://riabiz.com/a/2023/10/19/fidelity-just-dropped-the-hammer-on-screen-scrapers-to-cheers-but-some-firms-like-plaid-are-holdouts-and-the-cfpb-may-wield-the-final-gavel
 - Plaid Investments: https://plaid.com/products/investments/
+- Plaid Liabilities credit card fields: https://plaid.com/docs/api/products/liabilities/
+- Teller, free for 100 live connections: https://teller.io/
+- Ghostfolio, open-source self-hosted portfolio tracker: https://github.com/ghostfolio/ghostfolio
 - Plaid Trial plan, 10 items, includes Investments and Transactions: https://support.plaid.com/hc/en-us/articles/16194695660311-Can-I-use-Plaid-for-free
 - SnapTrade Fidelity, read-only, application required: https://snaptrade.com/brokerage-integrations/fidelity-api
 - Apple Foundation Models framework, on-device 3B model: https://www.apple.com/newsroom/2025/09/apples-foundation-models-framework-unlocks-new-intelligent-app-experiences/
