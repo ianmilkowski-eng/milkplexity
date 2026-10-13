@@ -362,6 +362,19 @@ test("HTTP, non-JSON, and network failures never retry or fall back", async () =
   }
 });
 
+test("non-JSON server errors leave card creation outcomes uncertain", async () => {
+  const env = load();
+  for (const status of [500, 502, 503]) {
+    for (const mutation of [false, true]) {
+      const {adapter, calls} = backend(env, [new Response("<html>upstream unavailable</html>", {status})]);
+      const error = await failure(env, () => adapter.api(mutation ? "/cards" : "/drill", mutation ? {tsv: "one\t1"} : undefined),
+        {status, uncertain: mutation});
+      assert.equal(error.code, "json");
+      assert.equal(calls.length, 1, "an unknown creation outcome must not be retried");
+    }
+  }
+});
+
 test("timeouts abort once and identify an uncertain mutation result", async () => {
   const env = load();
   for (const mutation of [false, true]) {

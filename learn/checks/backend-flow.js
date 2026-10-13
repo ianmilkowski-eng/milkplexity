@@ -23,7 +23,7 @@ const ledger = new Engine(mock.window.LearnDecks);
 ledger.s.cards = ledger.s.cards.slice(0, 8);
 ledger.s.drill_config = {...ledger.s.drill_config, shuffle: false, scope: "all", round_size: 4};
 const requests = [], errors = [], routeErrors = [], rejectedMutations = [];
-let omitCardMetadata = false, omitCardBack = false, omitNoteExtras = false, truncateNextAnswer = false;
+let omitCardMetadata = false, omitCardBack = false, omitNoteExtras = false, omitCurrentSideAliases = false, truncateNextAnswer = false;
 let delayNextDraft = 0, delayNextCreation = false;
 let failNextRead = false, readFailures = 0;
 
@@ -50,6 +50,9 @@ function wireView(view) {
   delete out.decks; delete out.modes;
   for (const card of out.cards) {
     delete card.deck;
+    // Explicit empty arrays advertise support for editing either answer side.
+    card.aliases = {front: [], back: [], ...card.aliases};
+    if (omitCurrentSideAliases) delete card.aliases[out.config.answer_with];
     if (omitCardMetadata) { delete card.mastery; delete card.due; }
     if (omitCardBack) delete card.back;
     if (omitNoteExtras) { delete card.mnemonic; delete card.aliases; }
@@ -113,8 +116,9 @@ function serverAction(action, extra = {}) {
           await new Promise(resolve => setTimeout(resolve, delay));
         }
         if (endpoint === "/cards" && delayNextCreation) {
+          const delay = typeof delayNextCreation === "number" ? delayNextCreation : 400;
           delayNextCreation = false;
-          await new Promise(resolve => setTimeout(resolve, 400));
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
         // /drill/plan is deliberately unavailable; backend mode must use counts.
         if (endpoint === "/drill/plan") {
@@ -319,9 +323,20 @@ function serverAction(action, extra = {}) {
     await page.click("[data-action=add]"); await settle();
     assert.equal(await page.locator("#add-deck").count(), 0, "creation offers no unsupported card set");
     await page.fill("#add-tsv", "Backend fixture\tAn answer saved only in the mock ledger.");
-    const creations = countRequests("/cards"); delayNextCreation = true;
+    const creations = countRequests("/cards"); delayNextCreation = 1800;
+    const creationRequest = page.waitForRequest(request => request.url().endsWith("/api/learn/cards"));
     await page.locator("#add-form").evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
-    await page.waitForFunction(() => window.Learn.view.total === 9); await settle();
+    await creationRequest;
+    await page.click("[data-action=back]"); await settle("library");
+    await page.click("[data-action=add]"); await settle("add");
+    assert.equal(await page.locator("#add-form .primary").isDisabled(), true, "recreated Add form remains locked while creation is pending");
+    await page.fill("#add-tsv", "Backend fixture\tAn answer saved only in the mock ledger.");
+    await page.locator("#add-form").evaluate(form => form.requestSubmit());
+    assert.equal(countRequests("/cards"), creations + 1, "navigation cannot send a second pending creation");
+    await page.waitForFunction(() => window.Learn.view.total === 9);
+    await page.waitForFunction(() => !document.querySelector("#add-form .primary")?.disabled); await settle("add");
+    assert.equal(await page.locator("#add-tsv").inputValue(), "Backend fixture\tAn answer saved only in the mock ledger.", "an older creation does not redirect or replace a new form");
+    await page.click("[data-action=back]"); await settle("library");
     assert.equal(countRequests("/cards"), creations + 1, "rapid double-submit creates only one card while a request is pending");
     const newCard = (await view()).cards.find(card => card.front === "Backend fixture");
     assert.ok(newCard, "card creation refreshes the library from the server");
@@ -346,8 +361,40 @@ function serverAction(action, extra = {}) {
     assert.match(await page.locator("#toast").textContent(), /1 card added.*Reload/, "failed refresh reports the acknowledged save");
     await page.locator("#add-form").evaluate(form => form.requestSubmit());
     assert.equal(countRequests("/cards"), creationsBeforeFailedRead + 1, "retrying the blocked form never sends a second creation");
+    await page.click("[data-action=back]"); await settle("library");
+    await page.click("[data-action=add]"); await settle("add");
+    assert.equal(await page.locator("#add-form .primary").isDisabled(), true, "creation retry remains locked after Back and Add when refresh failed");
+    await page.fill("#add-tsv", "Saved before refresh failure\tA committed card with a lost read.");
+    await page.locator("#add-form").evaluate(form => form.requestSubmit());
+    assert.equal(countRequests("/cards"), creationsBeforeFailedRead + 1, "a recreated Add form cannot duplicate an acknowledged creation");
     await page.reload({waitUntil: "load"}); await settle("home");
     assert.equal((await view()).cards.filter(card => card.front === "Saved before refresh failure").length, 1, "reload finds the committed card exactly once");
+
+    // Omitted current-side aliases are unknown, even if the other side is given.
+    const aliasCard = ledger.s.cards[0];
+    aliasCard.aliases = {back: ["Private current-side alias"], front: ["Visible opposite-side alias"]};
+    omitCurrentSideAliases = true;
+    await page.reload({waitUntil: "load"}); await settle("home");
+    await page.click("#tabbar [data-tab=library]"); await settle("library");
+    await page.click(`.lib-row[data-card="${aliasCard.id}"]`); await settle("card");
+    assert.equal(await page.locator("#aliases").count(), 0, "an omitted alias side is not offered as a blank editor");
+    await page.fill("#note", "Preserve aliases on both answer sides"); await page.click("#note-form .secondary");
+    await page.waitForFunction(id => window.Learn.view.cards.find(card => card.id === id)?.note === "Preserve aliases on both answer sides", aliasCard.id);
+    const aliasEdit = requests.filter(r => r.endpoint === `/cards/${aliasCard.id}/edit`).at(-1);
+    assert.ok(!("aliases" in aliasEdit.body) && !("side" in aliasEdit.body), "saving a note does not submit unknown current-side aliases");
+    assert.deepEqual(JSON.parse(JSON.stringify(ledger.s.cards.find(card => card.id === aliasCard.id).aliases)), {back: ["Private current-side alias"], front: ["Visible opposite-side alias"]}, "the private aliases are preserved");
+    omitCurrentSideAliases = false;
+
+    // Due times are instants; timezone-offset strings cannot be compared lexically.
+    const offsetCard = ledger.s.cards[0];
+    offsetCard.learning.back.mastery = "FAMILIAR";
+    offsetCard.due = new Date(Date.now() + 30 * 60 * 1000 - 12 * 60 * 60 * 1000).toISOString().replace("Z", "-12:00");
+    assert.ok(Date.parse(offsetCard.due) > Date.now(), "offset fixture is in the future");
+    assert.ok(offsetCard.due < new Date().toISOString(), "lexical date comparison would misclassify this fixture");
+    await page.reload({waitUntil: "load"}); await settle("home");
+    await page.click("#tabbar [data-tab=library]"); await settle("library");
+    await page.click("[data-action=lib-filter][data-kind=due]"); await settle("library");
+    assert.equal(await page.locator(`.lib-row[data-card="${offsetCard.id}"]`).count(), 0, "future offset timestamp is excluded from Due");
 
     // Optional per-card metadata controls claims and filters, never fake defaults.
     omitCardMetadata = true; omitNoteExtras = true;

@@ -143,7 +143,7 @@
         const content = await response.text();
         if (content.trim()) {
           try { data = JSON.parse(content); }
-          catch { throw new ApiError(response.ok ? "Learn API returned invalid JSON." : `Learn API request failed (${response.status}).`, {status: response.status, code: "json", uncertain: response.ok && verb !== "GET"}); }
+          catch { throw new ApiError(response.ok ? "Learn API returned invalid JSON." : `Learn API request failed (${response.status}).`, {status: response.status, code: "json", uncertain: verb !== "GET" && (response.ok || response.status >= 500)}); }
         }
         if (!response.ok) {
           const error = data?.error;

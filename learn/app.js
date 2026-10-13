@@ -30,7 +30,7 @@
   const TAB_SCREENS = ["home", "library", "tutor"];
 
   let view = null, current = null, plan = null, prefs = {}, queuedMode = null, rebuild = null, autoTimer = 0, busy = false, draftTimer = 0, draftPending = null, draftVersion = 0;
-  let sheet = null, tutorState = null, libFilter = {query: "", kind: "all"};
+  let sheet = null, tutorState = null, libFilter = {query: "", kind: "all"}, creationPending = false, creationNeedsRefresh = false;
   const scrolls = new Map(), flights = new Set();
 
   /* ---- small helpers ----------------------------------------------------- */
@@ -103,15 +103,23 @@
     catch (e) { await recover(e); toast(e.message); return false; }
     finally { busy = false; }
   }
-  async function refresh() { view = await api("/drill"); }
-  async function recoverCard(e) {
-    if (adapter.kind !== "backend" || (e.status !== 409 && !e.uncertain)) return;
-    try { await refresh(); go("library"); }
-    catch {
-      // A lost creation response cannot safely be resubmitted. Reload first.
-      const submit = $("#add-form button[type=submit]");
-      if (submit) { submit.disabled = true; submit.textContent = "Reload to check whether cards were added"; }
+  const creationLabel = () => creationPending ? "Adding cards…" : creationNeedsRefresh ? "Reload to refresh your library" : "Add cards";
+  function updateCreationState() {
+    for (const submit of $$("#add-form button[type=submit]")) {
+      submit.disabled = creationPending || creationNeedsRefresh;
+      submit.textContent = creationLabel();
     }
+  }
+  async function refresh() {
+    view = await api("/drill");
+    // While create is active, only its own completed read can resolve the lock.
+    if (!creationPending) creationNeedsRefresh = false;
+    updateCreationState();
+  }
+  async function recoverCard(e, navigate = true) {
+    if (adapter.kind !== "backend" || (e.status !== 409 && !e.uncertain)) return false;
+    try { await refresh(); if (navigate) go("library"); return true; }
+    catch { updateCreationState(); return false; }
   }
 
   /* ---- rebuild: the tap-by-tap correction step ---------------------------- */
@@ -421,7 +429,7 @@
     if (!feature("library")) return `<header class="topbar"><h1 class="topbar-title">Cards</h1></header><div class="content"><p class="empty">Card answers are unavailable from the Learn API.</p></div>`;
     const q = libFilter.query.trim().toLowerCase(), kind = libFilter.kind;
     const cards = view.cards.filter(c => (!q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q))
-      && (kind === "all" || (kind === "due" && (c.due <= new Date().toISOString() || c.mastery === "NEW")) || (kind === "starred" && c.starred) || (kind === "mastered" && c.mastery === "MASTERED")));
+      && (kind === "all" || (kind === "due" && (Date.parse(c.due) <= Date.now() || c.mastery === "NEW")) || (kind === "starred" && c.starred) || (kind === "mastered" && c.mastery === "MASTERED")));
     const rows = cards.map(c => `<li data-stagger><button type="button" class="row-btn lib-row" data-action="card" data-card="${esc(c.id)}">${dot(c)}<span class="texts"><span class="front">${esc(c.front)}</span><span class="back">${esc(c.back)}</span></span><span class="state">${MASTERY[c.mastery] || ""}</span></button>${c.starred !== undefined ? `<button type="button" class="icon-btn star" data-action="star" data-card="${esc(c.id)}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} ${esc(c.front)}">${c.starred ? "★" : "☆"}</button>` : ""}</li>`).join("");
     return `<header class="topbar"><h1 class="topbar-title left">Cards</h1><span class="spacer"></span><button type="button" class="secondary small" data-action="add">Add cards</button></header>
 <div class="content">
@@ -434,12 +442,13 @@
     if (!feature("library")) return libraryHTML();
     const c = cardOf(id); if (!c) return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button></header><div class="content"><p class="empty">That card is gone.</p></div>`;
     const aliases = (c.aliases?.[view.config.answer_with] || []).join("\n");
+    const editAliases = adapter.kind === "demo" || Array.isArray(c.aliases?.[view.config.answer_with]);
     return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button><span class="spacer"></span>${c.starred !== undefined ? `<button type="button" class="icon-btn star" data-action="star" data-card="${esc(c.id)}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} this card">${c.starred ? "★" : "☆"}</button>` : ""}</header>
 <div class="content">
   <div class="card-head" data-stagger><span class="chip static">${esc((view.decks.find(d => d.id === c.deck) || {name: "Cards"}).name)}</span><h2 class="prompt tight">${esc(c.front)}</h2></div>
   <section class="card" data-stagger><button type="button" class="secondary" id="reveal-card" data-action="reveal-card">Reveal answer</button><p class="answer-text ref" id="card-answer" hidden>${esc(c.back)}</p></section>
   ${c.mastery || c.due ? `<section class="block" data-stagger>${c.mastery ? `<h3 class="section-title">Mastery</h3><div class="row"><span>Answering with the ${view.config.answer_with === "back" ? "answer" : "term"}</span><strong>${MASTERY[c.mastery]}</strong></div>` : ""}<p class="caption">${c.due ? `Next review ${esc(fmtDate(c.due))}. ` : ""}${c.mastery ? "Mastered only through the Hard test." : ""}</p></section>` : ""}
-  ${["note", "mnemonic", "aliases"].some(k => c[k] !== undefined) ? `<section class="block" data-stagger><h3 class="section-title">Notes</h3><form id="note-form" data-card="${esc(c.id)}">${c.note !== undefined ? `<label>Note<textarea id="note" rows="2" maxlength="3000">${esc(c.note)}</textarea></label>` : ""}${c.mnemonic !== undefined ? `<label>Mnemonic<textarea id="mnemonic" rows="2" maxlength="3000">${esc(c.mnemonic)}</textarea></label>` : ""}${c.aliases !== undefined ? `<label>Accepted answers, one per line<textarea id="aliases" rows="2">${esc(aliases)}</textarea></label>` : ""}<button type="submit" class="secondary">Save notes</button></form></section>` : ""}
+  ${c.note !== undefined || c.mnemonic !== undefined || editAliases ? `<section class="block" data-stagger><h3 class="section-title">Notes</h3><form id="note-form" data-card="${esc(c.id)}">${c.note !== undefined ? `<label>Note<textarea id="note" rows="2" maxlength="3000">${esc(c.note)}</textarea></label>` : ""}${c.mnemonic !== undefined ? `<label>Mnemonic<textarea id="mnemonic" rows="2" maxlength="3000">${esc(c.mnemonic)}</textarea></label>` : ""}${editAliases ? `<label>Accepted answers, one per line<textarea id="aliases" rows="2">${esc(aliases)}</textarea></label>` : ""}<button type="submit" class="secondary">Save notes</button></form></section>` : ""}
   <button type="button" class="text-btn danger" data-action="delete-card" data-card="${esc(c.id)}" data-stagger>Delete card</button>
 </div>`;
   }
@@ -448,7 +457,7 @@
 <div class="content">
   <form id="add-form" data-stagger>${feature("sets") ? `<label>Set<select id="add-deck">${view.decks.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}</select></label>` : ""}
   <label>One card per line: the term, a tab, then the answer<textarea id="add-tsv" rows="6" placeholder="Recall&#9;Of the actual positive cases, the fraction that were found." required></textarea></label>
-  <button type="submit" class="primary">Add cards</button></form>
+  <button type="submit" class="primary" ${creationPending || creationNeedsRefresh ? "disabled" : ""}>${creationLabel()}</button></form>
   <p class="caption" data-stagger>Paste an export from Quizlet as is. New cards join the next round.</p>
 </div>`;
   }
@@ -667,14 +676,26 @@
       } catch (err) { await recoverCard(err); toast(err.uncertain ? "The save may have completed. Check your cards before trying again." : err.message); }
     }
     else if (form.id === "add-form") {
-      const submit = $("button[type=submit]", form); if (submit.disabled) return; submit.disabled = true;
+      if (creationPending || creationNeedsRefresh) return;
+      creationPending = true; updateCreationState();
       let added = null;
-      try { const r = await api("/cards", {tsv: $("#add-tsv").value, ...($("#add-deck") ? {deck: $("#add-deck").value} : {})}); added = r.added; await refresh(); toast(`${r.added} card${r.added === 1 ? "" : "s"} added.`); go("library"); }
-      catch (err) {
-        if (added !== null) { submit.textContent = "Reload to refresh your library"; toast(`${added} card${added === 1 ? "" : "s"} added. Reload to refresh your library.`); }
-        else { await recoverCard(err); toast(err.uncertain ? "Cards may have been added. Check your library before trying again." : err.message); }
+      const showCreated = async () => {
+        if (current?.id === "add" && current.el.contains(form)) go("library");
+        else if (current?.id === "library") go("library", {}, {quiet: true});
+        else if (current?.id === "home") await showHome({quiet: true});
+      };
+      try {
+        const r = await api("/cards", {tsv: $("#add-tsv", form).value, ...($("#add-deck", form) ? {deck: $("#add-deck", form).value} : {})});
+        added = r.added; creationNeedsRefresh = true; updateCreationState();
+        await refresh(); creationNeedsRefresh = false; toast(`${r.added} card${r.added === 1 ? "" : "s"} added.`);
+        await showCreated();
       }
-      finally { if (!submit.textContent.startsWith("Reload")) submit.disabled = false; }
+      catch (err) {
+        creationNeedsRefresh = added !== null || Boolean(err.uncertain); updateCreationState();
+        if (added !== null) toast(`${added} card${added === 1 ? "" : "s"} added. Reload to refresh your library.`);
+        else { if (await recoverCard(err, false)) { creationNeedsRefresh = false; await showCreated(); } toast(err.uncertain ? "Cards may have been added. Check your library before trying again." : err.message); }
+      }
+      finally { creationPending = false; updateCreationState(); }
     }
   });
   document.addEventListener("input", e => {

@@ -142,7 +142,8 @@ Requests time out after 15 seconds by default (`timeoutMs` is configurable).
 The adapter never retries mutations automatically. A stale revision (`409`)
 or uncertain study write triggers an authoritative `/drill` refresh. If a
 card write may have committed, the UI refreshes the library before another
-attempt; if that read fails, creation stays disabled until reload. This is
+attempt; if that read fails, creation stays disabled across navigation until
+an authoritative refresh or reload succeeds. This is
 recovery from an unknown outcome, not proof of server receipt semantics.
 
 The adapter translates UI modes into the existing `LearnEngine.MODES`
@@ -188,6 +189,8 @@ from demo data; `api.js` and `checks/api-test.js` define the executable shape.
   Notes, mnemonics, stars and side-specific aliases also need matching card
   edit behavior. Missing editable metadata hides its controls and is not sent
   back as blank defaults, so saving a note cannot erase omitted aliases.
+  Backend alias editors require an explicit array for the current answer side;
+  return an empty array to allow adding the first accepted answer on that side.
 - **Progress comparisons.** Without `feedback.before_mastery` or
   `session.counts_start`, the UI hides the corresponding transition or
   "Since you started" comparison. Add them server-side to enable those details.
