@@ -190,7 +190,7 @@
     const counts = view.counts, total = view.total || 1;
     const bar = ["NEW", "SEEN", "FAMILIAR", "MASTERED"].map(k => `<span class="seg seg-${k.toLowerCase()}" style="flex:${counts[k]} ${counts[k]} 0"></span>`).join("");
     const legend = ["NEW", "SEEN", "FAMILIAR", "MASTERED"].map(k => `${counts[k]} ${MASTERY[k]}`).join(" · ");
-    return `<header class="topbar"><div class="brand"><img src="../assets/favicon.png" alt=""><h1>Learn</h1></div>${themeButton()}</header>
+    return `<header class="topbar"><div class="brand"><img src="../assets/learn-mark.png" alt=""><h1>Learn</h1></div>${themeButton()}</header>
 <div class="content">
   ${feature("sets") ? `<section class="block" data-stagger><p class="eyebrow">Studying</p><div class="chips" role="group" aria-label="Cards to study">${decks.map(d => `<button type="button" class="chip ${cfg.deck === d.id ? "on" : ""}" data-action="deck" data-deck="${esc(d.id)}" aria-pressed="${cfg.deck === d.id}">${esc(d.name)}${d.id !== "all" && d.due ? `<span class="chip-count">${d.due}</span>` : ""}</button>`).join("")}</div></section>` : ""}
   <section class="block" data-stagger><p class="eyebrow">${active ? "In progress" : "Up next"}</p>

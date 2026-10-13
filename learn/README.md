@@ -230,5 +230,6 @@ The local engine and mock-backed checks establish prototype behavior only.
 These private acceptance checks remain outstanding until the backend is
 independently inspected and exercised.
 
-Assets: the page uses the public site's `../assets/favicon.png`; in the app use
+Assets: the page uses `../assets/learn-mark.png` (the glass pouring into "Ai";
+`../assets/learn-logo.png` is the full "Learn" lockup); in the app use
 `/static/brand/learn-app.png`.
