@@ -1,5 +1,5 @@
 /* Milkplexity Learn · app.js
-   Screens, routing and choreography. Every user action mutates the engine
+   Screens, routing and choreography. Every user action calls the adapter
    first, re-renders from its view, then hands rects to the spring engine:
    [tap] -> [engine action] -> [render from state] -> [springs retarget].
 
@@ -11,28 +11,35 @@
   const M = window.Motion, E = window.LearnEngine;
   const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
-  const engine = new E.Engine(window.LearnDecks);
+  const options = {...(window.LEARN_API || {})};
+  const requested = new URLSearchParams(location.search).get("api");
+  if (requested !== null) options.mode = requested;
+  let adapter;
+  try { adapter = window.LearnAPI.create(options); }
+  catch (e) { $("#app").innerHTML = `<div class="content"><p class="empty">Learn could not open. ${esc(e.message)}</p></div>`; $("#app").removeAttribute("aria-busy"); return; }
+  const engine = adapter.engine;
   /* crypto.randomUUID is absent on plain-http hosts other than localhost. */
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); }));
-  /* To run against the app's private ledger, make this fetch("/api/learn" + path). */
-  const api = (path, body, method) => engine.api(path, body, method);
+  const api = (path, body, method) => adapter.api(path, body, method);
 
   const MASTERY = {NEW: "New", SEEN: "Seen", FAMILIAR: "Familiar", MASTERED: "Mastered"};
   const CAPTIONS = {easy: "Tap the answer. Builds Familiar.", recall: "Think, flip, rate yourself. Builds Familiar.", hard: "Type it unaided. The only way to Mastered."};
   const FORMATS = {multiple_choice: "Choose the answer", true_false: "Is this the match?", flashcard: "Think, then reveal", written: "Type what you remember"};
   const PILL = [{value: "easy", label: "Easy", hint: CAPTIONS.easy}, {value: "recall", label: "Recall", hint: CAPTIONS.recall}, {value: "hard", label: "Hard test", hint: CAPTIONS.hard}];
-  const PREFS_KEY = "milkplexity-learn-prefs-v1";
+  const PREFS_KEY = adapter.kind === "demo" ? "milkplexity-learn-prefs-v1" : "milkplexity-learn-backend-prefs-v1";
   const TAB_SCREENS = ["home", "library", "tutor"];
 
-  let view = null, current = null, plan = null, prefs = {}, queuedMode = null, rebuild = null, autoTimer = 0, busy = false, draftTimer = 0;
+  let view = null, current = null, plan = null, prefs = {}, queuedMode = null, rebuild = null, autoTimer = 0, busy = false, draftTimer = 0, draftPending = null, draftVersion = 0;
   let sheet = null, tutorState = null, libFilter = {query: "", kind: "all"};
   const scrolls = new Map(), flights = new Set();
 
   /* ---- small helpers ----------------------------------------------------- */
   const cardOf = id => view.cards.find(c => c.id === id);
+  const feature = name => adapter.kind === "demo" || view?.features?.[name] === true;
+  const tutorPreview = adapter.kind === "demo";
   const session = () => view && view.session;
   const inRound = () => { const s = session(); return Boolean(s && ["question", "feedback"].includes(s.status)); };
-  const config = () => ({...E.DEFAULTS, ...(view ? view.config : {}), ...prefs});
+  const config = () => ({...adapter.defaults, ...(view ? view.config : {}), ...prefs, ...(!adapter.capabilities.sets ? {deck: "all"} : {})});
   function savePrefs(patch) { Object.assign(prefs, patch); try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {} M.settings.haptics = config().haptics !== false; }
   function loadPrefs() { try { prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { prefs = {}; } M.settings.haptics = config().haptics !== false; }
   function theme(value) {
@@ -53,9 +60,9 @@
   function bubble(card, {size = 56, cls = "", state = "", tag = "span", attrs = "", label = ""} = {}) {
     const glyph = state === "correct" ? '<i class="badge ok" aria-hidden="true">✓</i>' : state === "miss" ? '<i class="badge miss" aria-hidden="true">↻</i>' : "";
     const deck = view && view.decks.find(d => d.id === card.deck);
-    return `<${tag} class="bubble ${cls}" data-card="${esc(card.id)}" data-mastery="${esc(card.mastery || "NEW")}" data-state="${state}" style="--bubble:${size}px${deck ? `;--hue:${deck.hue}` : ""}" ${attrs}><span class="num" aria-hidden="true">${esc(String(label))}</span>${glyph}</${tag}>`;
+    return `<${tag} class="bubble ${cls}" data-card="${esc(card.id)}" data-mastery="${esc(card.mastery || "")}" data-state="${state}" style="--bubble:${size}px${deck && Number.isFinite(deck.hue) ? `;--hue:${deck.hue}` : ""}" ${attrs}><span class="num" aria-hidden="true">${esc(String(label))}</span>${glyph}</${tag}>`;
   }
-  const dot = card => `<span class="dot" data-mastery="${esc(card.mastery || "NEW")}" aria-hidden="true"></span>`;
+  const dot = card => `<span class="dot" data-mastery="${esc(card.mastery || "")}" aria-hidden="true"></span>`;
   const themeButton = () => `<button type="button" class="icon-btn" data-action="theme" aria-label="${document.documentElement.dataset.theme === "paper" ? "Dark mode" : "Paper mode"}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>`;
   function fly(m) { flights.add(m); const check = () => { if (m.done) flights.delete(m); else requestAnimationFrame(check); }; check(); return m; }
   function cancelFlights() { for (const m of flights) m.cancel(); flights.clear(); }
@@ -71,14 +78,41 @@
   }
 
   /* ---- engine calls ------------------------------------------------------- */
+  async function recover(e) {
+    if (adapter.kind !== "backend" || (e.status !== 409 && !e.uncertain)) return;
+    // A response may have been lost after committing. Read authoritative
+    // state; never replay a mutation with a fresh receipt identifier.
+    try {
+      await refresh(); rebuild = null; cancelFlights();
+      const live = session();
+      if (live && ["question", "feedback"].includes(live.status)) go("round");
+      else if (live) go("checkpoint");
+      else await showHome();
+    } catch { /* Keep the last rendered view and the original error. */ }
+  }
   async function perform(action, extra = {}) {
+    if (action !== "draft") {
+      clearTimeout(draftTimer); draftVersion += 1;
+      const previous = session();
+      while (draftPending) await draftPending;
+      if (previous?.id !== session()?.id || previous?.question?.id !== session()?.question?.id) return false;
+    }
     const s = session(); if (!s || busy) return false;
     busy = true; clearTimeout(autoTimer);
     try { view = await api("/drill/action", {session_id: s.id, revision: s.revision, question_id: s.question?.id, request_id: uuid(), action, ...extra}); return true; }
-    catch (e) { toast(e.message); return false; }
+    catch (e) { await recover(e); toast(e.message); return false; }
     finally { busy = false; }
   }
   async function refresh() { view = await api("/drill"); }
+  async function recoverCard(e) {
+    if (adapter.kind !== "backend" || (e.status !== 409 && !e.uncertain)) return;
+    try { await refresh(); go("library"); }
+    catch {
+      // A lost creation response cannot safely be resubmitted. Reload first.
+      const submit = $("#add-form button[type=submit]");
+      if (submit) { submit.disabled = true; submit.textContent = "Reload to check whether cards were added"; }
+    }
+  }
 
   /* ---- rebuild: the tap-by-tap correction step ---------------------------- */
   function seededOrder(n, seed) {
@@ -143,32 +177,35 @@
     const cfg = config(), s = session(), active = s && !["complete", "ended"].includes(s.status);
     const decks = [{id: "all", name: "All cards"}, ...view.decks];
     const preview = plan ? plan.card_ids.map(cardOf).filter(Boolean) : [];
+    const available = plan ? plan.total : (cfg.scope === "all" ? view.total : view.due);
+    const canStart = plan ? preview.length > 0 : view.total > 0;
     const counts = view.counts, total = view.total || 1;
     const bar = ["NEW", "SEEN", "FAMILIAR", "MASTERED"].map(k => `<span class="seg seg-${k.toLowerCase()}" style="flex:${counts[k]} ${counts[k]} 0"></span>`).join("");
     const legend = ["NEW", "SEEN", "FAMILIAR", "MASTERED"].map(k => `${counts[k]} ${MASTERY[k]}`).join(" · ");
     return `<header class="topbar"><div class="brand"><img src="../assets/favicon.png" alt=""><h1>Learn</h1></div>${themeButton()}</header>
 <div class="content">
-  <section class="block" data-stagger><p class="eyebrow">Studying</p><div class="chips" role="group" aria-label="Cards to study">${decks.map(d => `<button type="button" class="chip ${cfg.deck === d.id ? "on" : ""}" data-action="deck" data-deck="${d.id}" aria-pressed="${cfg.deck === d.id}">${esc(d.name)}${d.id !== "all" && d.due ? `<span class="chip-count">${d.due}</span>` : ""}</button>`).join("")}</div></section>
+  ${feature("sets") ? `<section class="block" data-stagger><p class="eyebrow">Studying</p><div class="chips" role="group" aria-label="Cards to study">${decks.map(d => `<button type="button" class="chip ${cfg.deck === d.id ? "on" : ""}" data-action="deck" data-deck="${esc(d.id)}" aria-pressed="${cfg.deck === d.id}">${esc(d.name)}${d.id !== "all" && d.due ? `<span class="chip-count">${d.due}</span>` : ""}</button>`).join("")}</div></section>` : ""}
   <section class="block" data-stagger><p class="eyebrow">${active ? "In progress" : "Up next"}</p>
-    ${preview.length ? `<div class="bubble-row" id="upnext" role="list" aria-label="Cards in the next round">${preview.map((c, i) => `<div class="bubble-item" role="listitem">${bubble(c, {size: 56, tag: "button", label: i + 1, attrs: `type="button" data-action="card" aria-label="${i + 1}. ${esc(c.front)}, ${MASTERY[c.mastery]}"`})}<span class="bubble-label" aria-hidden="true">${esc(c.front)}</span></div>`).join("")}${plan.total > preview.length ? `<div class="bubble-item" role="listitem" aria-label="${plan.total - preview.length} more after this round"><span class="bubble tail" style="--bubble:56px"><span class="num">+${plan.total - preview.length}</span></span><span class="bubble-label" aria-hidden="true">later</span></div>` : ""}</div>` : `<p class="empty">Nothing is due right now. Study all cards from Options, or add new ones.</p>`}
+    ${preview.length ? `<div class="bubble-row" id="upnext" role="list" aria-label="Cards in the next round">${preview.map((c, i) => `<div class="bubble-item" role="listitem">${bubble(c, {size: 56, tag: "button", label: i + 1, attrs: `type="button" data-action="card" aria-label="${i + 1}. ${esc(c.front)}, ${MASTERY[c.mastery] || "mastery unavailable"}" ${feature("library") ? "" : "disabled"}` })}<span class="bubble-label" aria-hidden="true">${esc(c.front)}</span></div>`).join("")}${plan.total > preview.length ? `<div class="bubble-item" role="listitem" aria-label="${plan.total - preview.length} more after this round"><span class="bubble tail" style="--bubble:56px"><span class="num">+${plan.total - preview.length}</span></span><span class="bubble-label" aria-hidden="true">later</span></div>` : ""}</div>` : `<p class="empty">${!plan && available ? "Your next round is selected when you start." : "Nothing is due right now. Study all cards from Options, or add new ones."}</p>`}
   </section>
   <section class="card start-card" data-stagger>
-    <p class="count-line">${active ? `Round ${s.round} · ${s.index} of ${s.queue.length} answered` : preview.length ? `${preview.length} card${preview.length === 1 ? "" : "s"} this round${plan.fresh ? ` · ${plan.fresh} new` : ""}` : "No cards this round"}</p>
+    <p class="count-line">${active ? `Round ${s.round} · ${s.index} of ${s.queue.length} answered` : preview.length ? `${preview.length} card${preview.length === 1 ? "" : "s"} this round${plan.fresh ? ` · ${plan.fresh} new` : ""}` : !plan ? `${available} card${available === 1 ? "" : "s"} ${cfg.scope === "all" ? "in the library" : "new or due"}` : "No cards this round"}</p>
     <div id="home-pill"></div>
     <p class="pill-caption" id="home-caption">${esc(CAPTIONS[cfg.mode])}</p>
     <p class="caption" id="home-format">${esc(formatLine(cfg.mode, preview, plan))}</p>
-    <button type="button" class="primary" data-action="${active ? "resume" : "start"}" ${!active && !preview.length ? "disabled" : ""}>${active ? "Resume round" : "Start round"}</button>
+    <button type="button" class="primary" data-action="${active ? "resume" : "start"}" ${!active && !canStart ? "disabled" : ""}>${active ? "Resume round" : "Start round"}</button>
   </section>
   <section class="block" data-stagger><h2 class="section-title">Mastery</h2><div class="mastery-bar" role="img" aria-label="${esc(legend)}">${view.total ? bar : ""}</div><p class="legend">${esc(legend)}</p><p class="caption">Mastered only through the Hard test.</p></section>
   <div class="row" data-stagger><span>Practiced today</span><strong>${view.daily} of ${cfg.daily_goal}</strong></div>
-  <button type="button" class="row row-btn" data-action="tab" data-tab="tutor" data-stagger><span>Talk it through with Fable or Astra</span><span class="chev" aria-hidden="true">›</span></button>
+  ${tutorPreview ? `<button type="button" class="row row-btn" data-action="tab" data-tab="tutor" data-stagger><span>Talk it through with Fable or Astra</span><span class="chev" aria-hidden="true">›</span></button>` : ""}
   <button type="button" class="row row-btn" data-action="sheet-full" data-stagger><span>Options</span><span class="chev" aria-hidden="true">›</span></button>
-  <p class="caption fine" data-stagger>Prototype: cards and progress stay in this browser. In the app they live in your private ledger.</p>
+  <p class="caption fine" data-stagger>${adapter.kind === "demo" ? "Prototype: cards and progress stay in this browser. In the app they live in your private ledger." : "Backend mode: study state comes from the configured Learn API. Tutor integration is not available here."}</p>
 </div>`;
   }
   /* The format the set will actually get, so the pill never overpromises. */
   function formatLine(mode, preview, plan) {
     if (!plan || !plan.total) return "";
+    if (mode === "hard" && !feature("cardMastery")) return "Every card is typed. Unaided wins on Familiar cards can reach Mastered.";
     if (mode === "hard") { const fresh = preview.filter(c => !["FAMILIAR", "MASTERED"].includes(c.mastery)).length; return fresh ? `Every card is typed. ${fresh === 1 ? "One card here needs" : `${fresh} cards here need`} two wins: the first makes ${fresh === 1 ? "it" : "them"} Familiar.` : "Every card is typed. A win here makes it Mastered."; }
     if (mode === "easy") return plan.total >= 4 ? "Four choices, one tap. No typing." : plan.total >= 2 ? "Small set: true or false until four different answers are in play." : "A set of one: reveal and rate.";
     return "Tap to reveal, then rate yourself. No typing.";
@@ -182,10 +219,11 @@
   async function start() {
     if (busy) return; busy = true;
     try { view = await api("/drill/start", {config: config()}); }
-    catch (e) { toast(e.message); busy = false; return; }
+    catch (e) { await recover(e); toast(e.message); busy = false; return; }
     busy = false;
-    const s = session(); const first = s.question?.card_id;
-    const from = first ? $(`#upnext .bubble[data-card="${first}"]`) : null;
+    const s = session(); if (!s?.question) { if (s) go("checkpoint"); else showHome(); return; }
+    const first = s.question.card_id;
+    const from = (first ? $$("#upnext .bubble").find(el => el.dataset.card === first) : null) || $("[data-action=start]");
     go("round", {}, {morph: from ? {from} : null});
   }
   function resume() { const s = session(); if (!s) return; if (["question", "feedback"].includes(s.status)) go("round"); else go("checkpoint"); }
@@ -193,7 +231,7 @@
   /* ---- round -------------------------------------------------------------- */
   function queueHTML(s) {
     return s.queue.map((id, i) => {
-      const c = cardOf(id) || {id, front: "?", mastery: "NEW"};
+      const c = cardOf(id) || {id, front: "?"};
       const state = i < s.index ? (s.round_results[i]?.correct ? "correct" : "miss") : i === s.index ? "current" : "upcoming";
       return bubble(c, {size: 28, cls: "qbubble", state, label: i + 1});
     }).join("");
@@ -227,7 +265,7 @@
     } else {
       html += `<h2 class="prompt" id="prompt" tabindex="-1">${esc(q.prompt)}</h2><form id="answer-form" class="answer-form"><label class="sr-only" for="answer">Your answer</label><textarea id="answer" rows="2" placeholder="Type what you remember" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="go" ${fb ? "disabled" : ""}>${esc(fb ? f.answer : q.draft)}</textarea>${fb ? "" : `<button type="submit" class="primary">Check</button><p class="caption" id="draft-status" aria-live="polite">${q.draft ? "Your saved answer is restored." : "Enter to check · Shift + Enter for a new line"}</p>`}</form>`;
     }
-    if (!fb) html += `<div class="q-actions"><button type="button" class="text-btn" data-action="unknown">Don't know</button><button type="button" class="chip" data-action="tutor">Ask the tutor · no mastery credit</button></div>`;
+    if (!fb) html += `<div class="q-actions"><button type="button" class="text-btn" data-action="unknown">Don't know</button><button type="button" class="chip" data-action="tutor" ${tutorPreview ? "" : "hidden"}>Ask the tutor · no mastery credit</button></div>`;
     else html += feedbackHTML(s, q, f);
     return html;
   }
@@ -235,9 +273,9 @@
     ensureRebuild();
     const title = f.correct ? (f.override ? "Marked correct." : "Got it.") : (f.dont_know ? "No problem. Let's learn it." : "Not quite. Let's rebuild it.");
     const showYours = !f.correct && !f.dont_know && (q.type === "written");
-    let html = `<div class="result ${f.correct ? "ok" : "retry"}" role="status"><p class="result-title"><span class="glyph" aria-hidden="true">${f.correct ? "✓" : "↻"}</span>${title}</p>${showYours ? `<p class="caption">Your answer</p><p class="answer-text">${esc(f.answer)}</p>` : ""}<p class="caption">Reference answer</p><p class="answer-text ref">${esc(q.answer)}</p>${q.assisted ? `<p class="caption">You asked first, so this one is practice, not unaided credit.</p>` : ""}<p class="caption mastery-note">${MASTERY[f.before_mastery] || ""} → ${MASTERY[f.mastery]}</p></div>`;
+    let html = `<div class="result ${f.correct ? "ok" : "retry"}" role="status"><p class="result-title"><span class="glyph" aria-hidden="true">${f.correct ? "✓" : "↻"}</span>${title}</p>${showYours ? `<p class="caption">Your answer</p><p class="answer-text">${esc(f.answer)}</p>` : ""}<p class="caption">Reference answer</p><p class="answer-text ref">${esc(q.answer)}</p>${q.assisted ? `<p class="caption">You asked first, so this one is practice, not unaided credit.</p>` : ""}<p class="caption mastery-note">${f.before_mastery ? `${MASTERY[f.before_mastery]} → ` : ""}${MASTERY[f.mastery]}</p></div>`;
     if (!f.correct) html += `<div class="rebuild" id="rebuild"><p class="caption">Rebuild the answer, tap by tap</p><div class="answer-line" id="answer-line" aria-label="Your rebuilt answer">${rebuild.placed.map(id => tileHTML(rebuild.tiles[id], "placed")).join("")}</div><div class="tray" id="tray">${rebuild.order.filter(id => !rebuild.placed.includes(id)).map(id => tileHTML(rebuild.tiles[id], "")).join("")}</div><p class="caption" id="rebuild-hint" aria-live="polite"></p></div>`;
-    html += `<div class="continue-row" id="continue-row"><button type="button" class="primary" data-action="continue" ${!f.correct && !rebuildDone() ? "disabled" : ""}>Continue</button>${!f.correct && !f.dont_know && q.type === "written" ? `<button type="button" class="text-btn" data-action="override">I was correct</button>` : ""}<button type="button" class="chip" data-action="tutor">${f.correct ? "Ask the tutor" : "Ask why"}</button></div>`;
+    html += `<div class="continue-row" id="continue-row"><button type="button" class="primary" data-action="continue" ${!f.correct && !rebuildDone() ? "disabled" : ""}>Continue</button>${!f.correct && !f.dont_know && q.type === "written" ? `<button type="button" class="text-btn" data-action="override">I was correct</button>` : ""}<button type="button" class="chip" data-action="tutor" ${tutorPreview ? "" : "hidden"}>${f.correct ? "Ask the tutor" : "Ask why"}</button></div>`;
     return html;
   }
   function renderQuestion(enter) {
@@ -267,14 +305,14 @@
     if (row) M.animate(row, {y: 0, opacity: 1}, {from: {y: 24, opacity: 0}});
     const correctTile = $(".tile.correct .slot"); if (correctTile) M.animate(correctTile, {scale: 1}, {preset: "snappy", from: {scale: .6}});
     const stage = $(".stage-avatar");
-    if (stage) { stage.dataset.mastery = f.mastery; if (f.mastery === "MASTERED" && f.before_mastery !== "MASTERED") M.animate(stage, {scale: 1.22}, {preset: "snappy", onRest: el => M.animate(el, {scale: 1}, {preset: "standard"})}); }
+    if (stage) { stage.dataset.mastery = f.mastery; if (f.mastery === "MASTERED" && f.before_mastery && f.before_mastery !== "MASTERED") M.animate(stage, {scale: 1.22}, {preset: "snappy", onRest: el => M.animate(el, {scale: 1}, {preset: "standard"})}); }
     if (!f.correct) setTimeout(() => $("#rebuild")?.scrollIntoView({block: "nearest", behavior: M.reduced() ? "auto" : "smooth"}), 80);
     if (f.correct) M.haptic(12); else { const wrong = $(".tile.wrong"); if (wrong) M.animate(wrong, {x: 0}, {preset: "snappy", velocity: {x: 600}}); M.haptic([10, 40, 10]); }
     if (tray) { M.animate(tray, {y: 0, opacity: 1}, {from: {y: 32, opacity: 0}}); M.stagger($$("#tray .rtile"), {from: {y: 10, opacity: 0}, start: 60}); }
     sound(f.correct);
     updateSheet();
   }
-  async function answer(extra) { if (busy) return; if (await perform("answer", extra)) afterAnswer(); }
+  async function answer(extra) { if (busy && !draftPending) return; if (await perform("answer", extra)) afterAnswer(); }
   async function reveal() {
     const s = session(); if (!s || s.status !== "question" || s.question.revealed) return;
     if (!await perform("reveal")) return;
@@ -304,13 +342,13 @@
     const queue = $(".queue");
     if (queue) { queue.innerHTML = queueHTML(s2); queue.setAttribute("aria-valuenow", s2.index); }
     if (stage && stageRect && oldGhost) {
-      const slot = $(`.qbubble[data-card="${prevId}"]`);
+      const slot = $$(".qbubble").find(el => el.dataset.card === prevId);
       oldGhost.dataset.state = prevCorrect ? "correct" : "miss";
       oldGhost.insertAdjacentHTML("beforeend", prevCorrect ? '<i class="badge ok" aria-hidden="true">✓</i>' : '<i class="badge miss" aria-hidden="true">↻</i>');
       if (slot) fly(M.morph({ghost: oldGhost, from: stageRect, to: slot, hide: [slot], reveal: [slot]}));
       const nextCard = cardOf(s2.question.card_id);
       stage.outerHTML = bubble(nextCard, {size: 64, cls: "stage-avatar", label: s2.index + 1, attrs: "data-morph-target"});
-      const newStage = $(".stage-avatar"), nextSlot = $(`.qbubble[data-card="${nextCard.id}"]`);
+      const newStage = $(".stage-avatar"), nextSlot = $$(".qbubble").find(el => el.dataset.card === nextCard.id);
       if (nextSlot && !M.reduced()) {
         const ghost = newStage.cloneNode(true); ghost.removeAttribute("data-morph-target");
         newStage.style.visibility = "hidden";
@@ -329,6 +367,7 @@
     if (await perform("end")) { rebuild = null; sheet.close(); go("checkpoint"); }
   }
   async function openTutor() {
+    if (!tutorPreview) return;
     const s = session(); if (!s || !["question", "feedback"].includes(s.status)) return;
     const answered = s.status === "feedback";
     if (!await perform("tutor")) return;
@@ -379,33 +418,35 @@
 
   /* ---- library, card detail, add ------------------------------------------ */
   function libraryHTML() {
+    if (!feature("library")) return `<header class="topbar"><h1 class="topbar-title">Cards</h1></header><div class="content"><p class="empty">Card answers are unavailable from the Learn API.</p></div>`;
     const q = libFilter.query.trim().toLowerCase(), kind = libFilter.kind;
     const cards = view.cards.filter(c => (!q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q))
       && (kind === "all" || (kind === "due" && (c.due <= new Date().toISOString() || c.mastery === "NEW")) || (kind === "starred" && c.starred) || (kind === "mastered" && c.mastery === "MASTERED")));
-    const rows = cards.map(c => `<li data-stagger><button type="button" class="row-btn lib-row" data-action="card" data-card="${c.id}">${dot(c)}<span class="texts"><span class="front">${esc(c.front)}</span><span class="back">${esc(c.back)}</span></span><span class="state">${MASTERY[c.mastery]}</span></button><button type="button" class="icon-btn star" data-action="star" data-card="${c.id}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} ${esc(c.front)}">${c.starred ? "★" : "☆"}</button></li>`).join("");
+    const rows = cards.map(c => `<li data-stagger><button type="button" class="row-btn lib-row" data-action="card" data-card="${esc(c.id)}">${dot(c)}<span class="texts"><span class="front">${esc(c.front)}</span><span class="back">${esc(c.back)}</span></span><span class="state">${MASTERY[c.mastery] || ""}</span></button>${c.starred !== undefined ? `<button type="button" class="icon-btn star" data-action="star" data-card="${esc(c.id)}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} ${esc(c.front)}">${c.starred ? "★" : "☆"}</button>` : ""}</li>`).join("");
     return `<header class="topbar"><h1 class="topbar-title left">Cards</h1><span class="spacer"></span><button type="button" class="secondary small" data-action="add">Add cards</button></header>
 <div class="content">
   <input type="search" id="lib-search" class="search" placeholder="Find a card" value="${esc(libFilter.query)}" aria-label="Find a card" data-stagger>
-  <div class="chips" role="group" aria-label="Show" data-stagger>${[["all", "All"], ["due", "Due"], ["starred", "Starred"], ["mastered", "Mastered"]].map(([v, l]) => `<button type="button" class="chip ${kind === v ? "on" : ""}" data-action="lib-filter" data-kind="${v}" aria-pressed="${kind === v}">${l}</button>`).join("")}</div>
+  <div class="chips" role="group" aria-label="Show" data-stagger>${[["all", "All"], ...(feature("cardDue") && feature("cardMastery") ? [["due", "Due"]] : []), ...(feature("cardStars") ? [["starred", "Starred"]] : []), ...(feature("cardMastery") ? [["mastered", "Mastered"]] : [])].map(([v, l]) => `<button type="button" class="chip ${kind === v ? "on" : ""}" data-action="lib-filter" data-kind="${v}" aria-pressed="${kind === v}">${l}</button>`).join("")}</div>
   ${rows ? `<ul class="lib-list" id="lib-list">${rows}</ul>` : `<p class="empty" data-stagger>${view.cards.length ? "No cards match." : "No cards yet. Add a few to begin."}</p>`}
 </div>`;
   }
   function cardHTML(id) {
+    if (!feature("library")) return libraryHTML();
     const c = cardOf(id); if (!c) return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button></header><div class="content"><p class="empty">That card is gone.</p></div>`;
     const aliases = (c.aliases?.[view.config.answer_with] || []).join("\n");
-    return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button><span class="spacer"></span><button type="button" class="icon-btn star" data-action="star" data-card="${c.id}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} this card">${c.starred ? "★" : "☆"}</button></header>
+    return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button><span class="spacer"></span>${c.starred !== undefined ? `<button type="button" class="icon-btn star" data-action="star" data-card="${esc(c.id)}" aria-pressed="${c.starred}" aria-label="${c.starred ? "Unstar" : "Star"} this card">${c.starred ? "★" : "☆"}</button>` : ""}</header>
 <div class="content">
   <div class="card-head" data-stagger><span class="chip static">${esc((view.decks.find(d => d.id === c.deck) || {name: "Cards"}).name)}</span><h2 class="prompt tight">${esc(c.front)}</h2></div>
   <section class="card" data-stagger><button type="button" class="secondary" id="reveal-card" data-action="reveal-card">Reveal answer</button><p class="answer-text ref" id="card-answer" hidden>${esc(c.back)}</p></section>
-  <section class="block" data-stagger><h3 class="section-title">Mastery</h3><div class="row"><span>Answering with the ${view.config.answer_with === "back" ? "answer" : "term"}</span><strong>${MASTERY[c.mastery]}</strong></div><p class="caption">Next review ${esc(fmtDate(c.due))}. Mastered only through the Hard test.</p></section>
-  <section class="block" data-stagger><h3 class="section-title">Notes</h3><form id="note-form" data-card="${c.id}"><label>Note<textarea id="note" rows="2" maxlength="3000">${esc(c.note)}</textarea></label><label>Mnemonic<textarea id="mnemonic" rows="2" maxlength="3000">${esc(c.mnemonic)}</textarea></label><label>Accepted answers, one per line<textarea id="aliases" rows="2">${esc(aliases)}</textarea></label><button type="submit" class="secondary">Save notes</button></form></section>
-  <button type="button" class="text-btn danger" data-action="delete-card" data-card="${c.id}" data-stagger>Delete card</button>
+  ${c.mastery || c.due ? `<section class="block" data-stagger>${c.mastery ? `<h3 class="section-title">Mastery</h3><div class="row"><span>Answering with the ${view.config.answer_with === "back" ? "answer" : "term"}</span><strong>${MASTERY[c.mastery]}</strong></div>` : ""}<p class="caption">${c.due ? `Next review ${esc(fmtDate(c.due))}. ` : ""}${c.mastery ? "Mastered only through the Hard test." : ""}</p></section>` : ""}
+  ${["note", "mnemonic", "aliases"].some(k => c[k] !== undefined) ? `<section class="block" data-stagger><h3 class="section-title">Notes</h3><form id="note-form" data-card="${esc(c.id)}">${c.note !== undefined ? `<label>Note<textarea id="note" rows="2" maxlength="3000">${esc(c.note)}</textarea></label>` : ""}${c.mnemonic !== undefined ? `<label>Mnemonic<textarea id="mnemonic" rows="2" maxlength="3000">${esc(c.mnemonic)}</textarea></label>` : ""}${c.aliases !== undefined ? `<label>Accepted answers, one per line<textarea id="aliases" rows="2">${esc(aliases)}</textarea></label>` : ""}<button type="submit" class="secondary">Save notes</button></form></section>` : ""}
+  <button type="button" class="text-btn danger" data-action="delete-card" data-card="${esc(c.id)}" data-stagger>Delete card</button>
 </div>`;
   }
   function addHTML() {
     return `<header class="topbar"><button type="button" class="icon-btn" data-action="back" aria-label="Back">‹</button><h1 class="topbar-title">Add cards</h1><span class="spacer"></span></header>
 <div class="content">
-  <form id="add-form" data-stagger><label>Set<select id="add-deck">${view.decks.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("")}</select></label>
+  <form id="add-form" data-stagger>${feature("sets") ? `<label>Set<select id="add-deck">${view.decks.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}</select></label>` : ""}
   <label>One card per line: the term, a tab, then the answer<textarea id="add-tsv" rows="6" placeholder="Recall&#9;Of the actual positive cases, the fraction that were found." required></textarea></label>
   <button type="submit" class="primary">Add cards</button></form>
   <p class="caption" data-stagger>Paste an export from Quizlet as is. New cards join the next round.</p>
@@ -414,6 +455,7 @@
 
   /* ---- tutor preview ------------------------------------------------------ */
   function tutorHTML() {
+    if (!tutorPreview) return `<header class="topbar"><h1 class="topbar-title">Tutor</h1></header><div class="content"><p class="empty">The tutor conversation API has not been connected to this prototype.</p></div>`;
     const t = tutorState, ctx = t?.context;
     return `<header class="topbar"><button type="button" class="text-btn" data-action="back">Done</button><p class="topbar-title">Tutor</p><span class="spacer"></span></header>
 <div class="content">
@@ -447,6 +489,7 @@
     nodes[nodes.length - 1].scrollIntoView({block: "nearest", behavior: M.reduced() ? "auto" : "smooth"});
   }
   function mountTutor(el) {
+    if (!tutorPreview) return;
     new window.Pill({el: $("#tutor-mode", el), options: [{value: "direct", label: "Direct answers"}, {value: "socratic", label: "Guide my thinking"}], value: prefs.tutor_mode || "direct", label: "How the tutor helps", onChange: v => savePrefs({tutor_mode: v})});
   }
 
@@ -467,7 +510,7 @@
   <div class="option-rows">
     <label class="row"><span>Answer with</span><select id="opt-side" ${locked ? "disabled" : ""}><option value="back" ${cfg.answer_with === "back" ? "selected" : ""}>The answer</option><option value="front" ${cfg.answer_with === "front" ? "selected" : ""}>The term</option></select></label>
     <label class="row"><span>Cards</span><select id="opt-scope" ${locked ? "disabled" : ""}><option value="due" ${cfg.scope === "due" ? "selected" : ""}>New and due</option><option value="all" ${cfg.scope === "all" ? "selected" : ""}>All cards</option></select></label>
-    <label class="row"><span>Starred only</span><input type="checkbox" id="opt-starred" ${cfg.starred ? "checked" : ""} ${locked ? "disabled" : ""}></label>
+    ${feature("cardStars") ? `<label class="row"><span>Starred only</span><input type="checkbox" id="opt-starred" ${cfg.starred ? "checked" : ""} ${locked ? "disabled" : ""}></label>` : ""}
     ${mode === "hard" ? `<label class="row"><span>Grading in the Hard test</span><select id="opt-grading"><option value="smart" ${cfg.grading === "smart" ? "selected" : ""}>Smart · small typos</option><option value="exact" ${cfg.grading === "exact" ? "selected" : ""}>Exact · case and symbols</option></select></label>` : ""}
     <label class="row"><span>Advance after correct answers</span><input type="checkbox" id="opt-auto_advance" ${cfg.auto_advance ? "checked" : ""}></label>
     <label class="row"><span>Gentle sounds</span><input type="checkbox" id="opt-sound" ${cfg.sound ? "checked" : ""}></label>
@@ -476,8 +519,8 @@
   </div>
   ${locked ? `<p class="caption">Start a new session to change the cards or the answer side.</p>` : ""}
   ${locked ? `<button type="button" class="secondary" data-action="finish">Finish for now</button>` : ""}
-  ${!live ? `<button type="button" class="row row-btn" data-action="tab" data-tab="library"><span>Card library</span><span class="chev" aria-hidden="true">›</span></button>` : ""}
-  <button type="button" class="text-btn danger" data-action="reset">Reset the sample cards</button>
+  ${!live && feature("library") ? `<button type="button" class="row row-btn" data-action="tab" data-tab="library"><span>Card library</span><span class="chev" aria-hidden="true">›</span></button>` : ""}
+  ${adapter.capabilities.reset ? `<button type="button" class="text-btn danger" data-action="reset">Reset the sample cards</button>` : ""}
 </div>`;
   }
   let sheetDirty = false;
@@ -563,6 +606,8 @@
     else showHome();
   }
   function updateTabbar() {
+    $(".tab[data-tab=library]").hidden = !feature("library");
+    $(".tab[data-tab=tutor]").hidden = !tutorPreview;
     const bar = $("#tabbar"); const show = TAB_SCREENS.includes(current?.id); bar.hidden = !show;
     if (!show) return;
     let active = null;
@@ -584,7 +629,7 @@
     else if (a === "deck") { savePrefs({deck: b.dataset.deck}); await replan(); go("home", {}, {quiet: true}); }
     else if (a === "start") start();
     else if (a === "resume") resume();
-    else if (a === "card") { const src = b.classList.contains("bubble") ? b : $(".bubble", b); go("card", {id: b.dataset.card, from: current?.id || "library"}, {morph: src ? {from: src} : null}); }
+    else if (a === "card" && feature("library")) { const src = b.classList.contains("bubble") ? b : $(".bubble", b); go("card", {id: b.dataset.card, from: current?.id || "library"}, {morph: src ? {from: src} : null}); }
     else if (a === "back") back();
     else if (a === "home") { sheet.close(); showHome(); }
     else if (a === "done") { if (await perform("end")) { sheet.close(); showHome(); } }
@@ -605,22 +650,44 @@
     else if (a === "sheet-full") sheet.open("full");
     else if (a === "add") go("add");
     else if (a === "lib-filter") { libFilter.kind = b.dataset.kind; go("library", {}, {quiet: true}); }
-    else if (a === "star") { const c = cardOf(b.dataset.card); if (!c) return; try { await api(`/cards/${c.id}/edit`, {starred: !c.starred}); await refresh(); for (const x of $$(`[data-action=star][data-card="${c.id}"]`)) { x.setAttribute("aria-pressed", String(!c.starred)); x.textContent = !c.starred ? "★" : "☆"; } M.animate(b, {scale: 1}, {preset: "snappy", velocity: {scale: 5}}); } catch (err) { toast(err.message); } }
+    else if (a === "star") { const c = cardOf(b.dataset.card); if (!c) return; try { await api(`/cards/${encodeURIComponent(c.id)}/edit`, {starred: !c.starred}); await refresh(); for (const x of $$("[data-action=star]").filter(el => el.dataset.card === c.id)) { x.setAttribute("aria-pressed", String(!c.starred)); x.textContent = !c.starred ? "★" : "☆"; } M.animate(b, {scale: 1}, {preset: "snappy", velocity: {scale: 5}}); } catch (err) { await recoverCard(err); toast(err.message); } }
     else if (a === "reveal-card") { const p = $("#card-answer"); p.hidden = false; b.hidden = true; M.animate(p, {y: 0, opacity: 1}, {from: {y: 8, opacity: 0}}); }
-    else if (a === "delete-card") { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to delete this card"; return; } try { await api(`/cards/${b.dataset.card}`, null, "DELETE"); await refresh(); toast("Card deleted."); go("library"); } catch (err) { toast(err.message); } }
-    else if (a === "reset") { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to reset every card and its progress"; return; } view = await api("/reset"); queuedMode = null; rebuild = null; sheet.close(); toast("Sample cards restored."); showHome(); }
+    else if (a === "delete-card") { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to delete this card"; return; } try { await api(`/cards/${encodeURIComponent(b.dataset.card)}`, null, "DELETE"); await refresh(); toast("Card deleted."); go("library"); } catch (err) { await recoverCard(err); toast(err.message); } }
+    else if (a === "reset" && adapter.capabilities.reset) { if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Tap again to reset every card and its progress"; return; } view = await api("/reset"); queuedMode = null; rebuild = null; sheet.close(); toast("Sample cards restored."); showHome(); }
   });
   document.addEventListener("submit", async e => {
     const form = e.target; e.preventDefault();
     if (form.id === "answer-form") { clearTimeout(draftTimer); answer({answer: $("#answer").value}); }
-    else if (form.id === "note-form") { try { const aliases = $("#aliases").value.split(/\r?\n/).map(x => x.trim()).filter(Boolean); await api(`/cards/${form.dataset.card}/edit`, {note: $("#note").value, mnemonic: $("#mnemonic").value, aliases, side: view.config.answer_with}); await refresh(); toast("Saved to this card."); } catch (err) { toast(err.message); } }
-    else if (form.id === "add-form") { try { const r = await api("/cards", {tsv: $("#add-tsv").value, deck: $("#add-deck").value}); await refresh(); toast(`${r.added} card${r.added === 1 ? "" : "s"} added.`); go("library"); } catch (err) { toast(err.message); } }
+    else if (form.id === "note-form") {
+      try {
+        const patch = {};
+        for (const key of ["note", "mnemonic"]) if ($(`#${key}`, form)) patch[key] = $(`#${key}`, form).value;
+        if ($("#aliases", form)) { patch.aliases = $("#aliases", form).value.split(/\r?\n/).map(x => x.trim()).filter(Boolean); patch.side = view.config.answer_with; }
+        await api(`/cards/${encodeURIComponent(form.dataset.card)}/edit`, patch); await refresh(); toast("Saved to this card.");
+      } catch (err) { await recoverCard(err); toast(err.uncertain ? "The save may have completed. Check your cards before trying again." : err.message); }
+    }
+    else if (form.id === "add-form") {
+      const submit = $("button[type=submit]", form); if (submit.disabled) return; submit.disabled = true;
+      let added = null;
+      try { const r = await api("/cards", {tsv: $("#add-tsv").value, ...($("#add-deck") ? {deck: $("#add-deck").value} : {})}); added = r.added; await refresh(); toast(`${r.added} card${r.added === 1 ? "" : "s"} added.`); go("library"); }
+      catch (err) {
+        if (added !== null) { submit.textContent = "Reload to refresh your library"; toast(`${added} card${added === 1 ? "" : "s"} added. Reload to refresh your library.`); }
+        else { await recoverCard(err); toast(err.uncertain ? "Cards may have been added. Check your library before trying again." : err.message); }
+      }
+      finally { if (!submit.textContent.startsWith("Reload")) submit.disabled = false; }
+    }
   });
   document.addEventListener("input", e => {
     if (e.target.id !== "answer" || !inRound()) return;
     clearTimeout(draftTimer);
-    const value = e.target.value;
-    draftTimer = setTimeout(async () => { if (!inRound() || session().status !== "question") return; if (await perform("draft", {text: value})) { const st = $("#draft-status"); if (st) st.textContent = "Draft saved privately."; } }, 700);
+    const value = e.target.value, sessionId = session().id, questionId = session().question.id, version = ++draftVersion;
+    draftTimer = setTimeout(async () => {
+      if (draftPending) await draftPending;
+      if (version !== draftVersion || !inRound() || session().status !== "question" || session().id !== sessionId || session().question.id !== questionId || busy) return;
+      const pending = draftPending = perform("draft", {text: value});
+      try { if (await pending) { const st = $("#draft-status"); if (st && $("#answer")?.value === value) st.textContent = adapter.kind === "demo" ? "Draft saved privately." : "Draft saved."; } }
+      finally { if (draftPending === pending) draftPending = null; }
+    }, 700);
   });
   document.addEventListener("change", e => { if (e.target.id?.startsWith("opt-")) optionChange(e.target); });
   /* The peek strip steps aside only while the software keyboard is up
@@ -670,6 +737,6 @@
     else await showHome();
     $("#app").removeAttribute("aria-busy");
   }
-  window.Learn = {get view() { return view; }, get engine() { return engine; }, get sheet() { return sheet; }, go, perform, api, makeRebuild};
+  window.Learn = {get view() { return view; }, get engine() { return engine; }, get adapter() { return adapter; }, get sheet() { return sheet; }, go, perform, api, makeRebuild};
   init().catch(e => { console.error(e); const el = $("#screen") || $("#app"); el.innerHTML = `<div class="content"><p class="empty">Learn could not open. ${esc(e.message)}</p><button type="button" class="primary" onclick="location.reload()">Try again</button></div>`; });
 })();
