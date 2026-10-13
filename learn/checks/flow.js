@@ -5,7 +5,7 @@ const fails = []; const assert = (c, m) => { if (!c) fails.push(m); };
 const REDUCED = process.argv.includes("--reduced");
 (async () => {
   const {server, base} = await serve();
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({executablePath: process.env.CHROMIUM});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, isMobile: true, hasTouch: true, deviceScaleFactor: 2, reducedMotion: REDUCED ? "reduce" : "no-preference"});
   const page = await ctx.newPage(); page.setDefaultTimeout(8000);
   const errors = [];
