@@ -1,0 +1,15 @@
+{
+  "name": "milkplexity-ux-crucible",
+  "private": true,
+  "description": "UX reliability gates for the Milkplexity static site: layout lock, CLS, contrast, tap targets, heading hierarchy, dead links, chaos.",
+  "scripts": {
+    "test": "playwright test",
+    "test:update-baselines": "playwright test --update-snapshots",
+    "test:chaos": "playwright test tests/chaos.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "http-server": "^14.1.1"
+  }
+}
